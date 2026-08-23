@@ -408,6 +408,68 @@ call site's params.
 - Casing is CSS (`.kv-header`, `.response-headers th`, `.metric-label` all uppercase), so the
   copy stays sentence case and no accent is lost to a hand-typed capital.
 
+### Scale
+
+The app is tuned for workspaces of thousands of requests, and the four places that cost
+anything at that size all have a comment saying so. None of it is speculative — each was a
+measurable amount of work per keystroke or per gesture.
+
+**The sidebar tree is windowed.** `useVirtualRows` renders the rows in view and creates the
+scroll extent with `--vrow-pad-top` / `--vrow-pad-bottom` on `.tree-scroll` itself — no
+spacer elements, so `role="tree"` keeps having only `treeitem` children, and the base
+`1px`/`8px` stays declared once in CSS behind a `0px` fallback the two empty-state scrollers
+rely on. Three CSS properties are load-bearing there: `position: relative` (or `offsetTop`
+resolves against an ancestor outside the scroller), `overflow-anchor: none` (or Chromium
+corrects `scrollTop` on top of our own padding swap and the tree fights the wheel), and the
+`calc()` padding itself. Only `geometry` and `first` are React state; everything the render
+needs derives purely from them, and every measurement is `scrollTop`/`clientHeight`/
+`offsetTop` — never `getBoundingClientRect`, which is post-`zoom` and would not share a
+coordinate space. The pitch is **measured across the whole rendered span**, not read off
+`--h-row-tree` and not taken from one row: `offsetTop` is integer-rounded, and at 125% the
+true 37.5px pitch reads as 38, which is ~500px of wrong scrollbar per thousand rows.
+
+Windowing broke three things that had to be fixed with it, and each is a comment where the
+fix lives. `Home`/`End`/`←` can target an unmounted row, so `moveTo` keeps its synchronous
+`.focus()` and falls back to scrolling plus a **one-shot ref** the next commit satisfies —
+keyed on nothing, so it cannot become the focus-stealing effect its own doc comment warns
+about. The roving `tabIndex={0}` lives on a row, so the container takes the tab stop while
+that row is out of the window. And removing a focused element fires **no blur**: scrolling
+past the focused row silently sent focus to `<body>`, killing the arrow keys, and it is also
+why the rename state and its draft live in `useTreeNavigation` rather than in the row.
+
+`TreeRow` and `TreeRowActions` are `memo`ised, which only works because tree updates copy
+the spine. The row takes `node` plus three integers rather than a `VisibleRow` — that object
+is minted fresh per node on every tree change and could never compare equal. A row holds no
+store subscription: `t` comes down as a prop, and the actions through `treeActions`, which
+reads `getState()` because an action's identity is fixed for the life of the store and those
+five selectors could never fire. The one real data dependency, the method, sits in its own
+memoised chip; lifting it would make `Sidebar` subscribe to `documents` and re-render on
+every keystroke.
+
+**The autosave subscriber does nothing on a transition it does not care about.** `PREFS_KEYS`
+mirrors `WORKSPACE_KEYS` — completeness assertion and all, over `PrefsSource` — as siblings
+rather than nested, because a prefs-only change still has to write. `createWriter` takes a
+**thunk**: serialising was never debounced, only writing, so a forty-character burst paid
+forty whole-workspace `JSON.stringify`s. And `credentialsUnchanged` rejects the ordinary
+keystroke in pointer comparisons before the credential signature's three traversals run. It
+compares the `environments` **array** and not the collection node, because
+`setActiveEnvironment` mints a new node around the same array.
+
+**`responses` has a ceiling.** `RESPONSE_BUDGET_CHARS` evicts the least recently received
+`success` bodies, never the active one, in characters because a JS string is UTF-16.
+`installBodyRelease` needs no change: an evicted id looks exactly like any other discard, so
+the Go-side bytes go with it.
+
+**The startup chunk carries only what the first paint needs.** The five dialogs already split
+shell from body, so four bodies are `React.lazy`; the seven rarely-met response viewers are
+too. Two static edges had to be cut for the code view to leave: `copySnippet`'s import of the
+snippet barrel (now inside the already-async function) and `store.ts`'s import of the target
+table (now `snippets/targets.ts`, with the generators behind a `Record<SnippetTarget, …>` so
+the "no target without a generator" invariant survives as a type error). `styles/fonts.css`
+declares the four latin faces by hand because a Wails binary embeds every asset — the eight
+non-latin subsets `unicode-range` would simply never fetch in a browser were shipping in the
+installer regardless.
+
 Layout and shortcuts live in `App.tsx` and `useGlobalShortcuts.ts`: a CSS-grid shell with pointer-event resizers (sidebar width in px, request/response split as an `fr` percentage) and window-level `Ctrl/Cmd+S` (flush to disk now), `Ctrl/Cmd+W` (close), `Ctrl/Cmd+Enter` (send), and `Escape` (abort in-flight).
 
 URL and query params stay bidirectionally synced: editing param rows rewrites the URL through `replaceQuery` (in `store.ts`, preserving any `#hash`), and every keystroke in the URL field re-derives rows via `parseParams`, reusing existing row ids so React keys and descriptions survive rather than the three inputs being remounted on every keystroke.
