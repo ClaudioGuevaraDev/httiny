@@ -432,9 +432,11 @@ export async function hydrate(): Promise<void> {
    *
    * `readPrefs` validates `activeId`, `selectedNodeId` and `activeCollectionId` one at a
    * time, against the tree and the documents. Each is a live id, and the three together
-   * can still disagree: `selectCollection` moves the rail without touching the active
-   * tab, and both fields are persisted. So a launch could show the rail on one
-   * collection while the active tab belonged to another, with no row selected.
+   * can still disagree — so a launch could show the rail on one collection while the active
+   * tab belonged to another, with no row selected. Nothing in the app writes that pair any
+   * more, now that the tab strip is scoped and `selectCollection` retargets the active tab
+   * instead of leaving it behind; a `ui.json` from a build before that does, and so does
+   * one edited by hand. This is what makes reading either harmless.
    *
    * Reconciling them inside the hydration `setState` fixed the screen and nothing else.
    * `installAutosave` seeds `lastPrefs` from the state it finds, so a repair folded into

@@ -10,10 +10,11 @@ import { Select } from './Select'
  *
  * In the collection's own sidebar panel, directly under its name, and that placement is
  * the whole point. The version of this that shipped in 0.31.0 put one picker at the right
- * end of the tab strip over a workspace-wide pool, and it had to carry a scope label
- * saying which collection it was really acting on — because the tab strip is not scoped
- * and the rail can be showing something else. Here there is nothing to disambiguate: the
- * control is visibly inside the panel of the collection it belongs to.
+ * end of the tab strip over a workspace-wide pool, and it had to carry a scope label saying
+ * which collection it was really acting on. Here there is nothing to disambiguate: the
+ * control is visibly inside the panel of the collection it belongs to. The strip is scoped
+ * to one collection now as well, which removes the symptom the label papered over — but a
+ * single picker still could not name which of several per-collection pools it edits.
  *
  * The collection arrives as a prop rather than being selected, because `Sidebar` already
  * holds it — a second subscription would re-render this on every store change.

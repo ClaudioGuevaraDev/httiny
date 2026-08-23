@@ -243,10 +243,11 @@ export function Sidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle:
         >
           {collection && <CollectionHeading collection={collection} />}
           {/* Under the collection's name rather than in the tab strip, which is where the
-              workspace-global version of this lived. The tab strip is not scoped — it can
-              hold requests from four collections at once — so a picker there had to carry a
-              label saying which collection it really acted on. Here the panel is the
-              scope. */}
+              workspace-global version of this lived and had to carry a label saying which
+              collection it really acted on. Here the panel is the scope, and the control is
+              visibly inside the collection it belongs to. (The strip is scoped to one
+              collection too now, but that only removes the old symptom — it does not make a
+              workspace-wide picker over per-collection pools mean anything.) */}
           {collection && <EnvironmentPicker collection={collection} />}
           {/* Two empty states, not one: with the tree scoped to a collection, "no
               rows" no longer means "nothing exists" — it usually means this

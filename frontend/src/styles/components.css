@@ -3159,11 +3159,11 @@
 
   /* ── Environment picker ────────────────────────────────────────────────────
    * Its own row in the collection panel, under the heading — not in this section's
-   * `.workspace-top`, which is where the workspace-global version of this lived. That
-   * strip is not scoped to a collection, so a picker there had to carry a label saying
-   * which collection it really acted on; here the panel is the scope and the row says
-   * nothing. It stays filed beside `.workspace-actions` anyway, because whoever comes
-   * looking for it will look here first.
+   * `.workspace-top`, which is where the workspace-global version of this lived. A picker
+   * up there had to carry a label saying which collection it really acted on; here the
+   * panel is the scope and the row says nothing. It stays filed beside
+   * `.workspace-actions` anyway, because whoever comes looking for it will look here
+   * first.
    *
    * The margin is the one the sidebar's search row used before it was removed: it is the
    * only chrome between the collection heading and the tree now, so it inherits the job of

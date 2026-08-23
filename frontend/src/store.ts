@@ -470,10 +470,15 @@ const remember = (recentIds: string[], id: string): string[] => [id, ...recentId
  *
  * This is the invariant tying `activeId`, `activeCollectionId` and `selectedNodeId`
  * together, so **every** writer of `activeId` applies it — hydration included, which
- * used to be the one exception. `selectCollection` and `addNode('collection')` move the
- * rail and clear the selection *without* touching `activeId`, and all three fields are
- * persisted, so `ui.json` can legitimately hold a pair that disagrees; `readPrefs`
- * validates each field on its own and cannot repair it. Exported for that one caller.
+ * used to be one exception, and `selectCollection` and `addNode('collection')`, which used
+ * to be the others. The strip is scoped to a collection now, so the invariant closes in
+ * both directions: this half pulls the rail to the active tab, `activeFor` pulls the active
+ * tab to the rail. Neither field can be left naming a collection the other is not showing.
+ *
+ * All three are persisted and `readPrefs` validates each on its own, so a `ui.json` from
+ * an older build — or edited by hand — can still hold a pair that disagrees. Nothing in
+ * the app produces that shape any more; the repair at the end of `hydrate` is what makes
+ * reading one harmless. Exported for that one caller.
  */
 export const revealPatch = (tree: TreeNode[], requestId: string | null, selectedNodeId: string | null, activeCollectionId: string | null) => {
   const nodeId = requestId ? findRequestNodeId(tree, requestId) : null
@@ -579,6 +584,46 @@ const ownersOf = (tree: TreeNode[]): ReadonlyMap<string, CollectionNode> => {
 export const collectionOf = (state: ResolutionState, requestId: string): CollectionNode | null => ownersOf(state.tree).get(requestId) ?? null
 
 /**
+ * The open tabs belonging to one collection, in strip order — exactly what `RequestTabs`
+ * renders.
+ *
+ * **Derived, never stored.** `tabs` stays one flat ordered list and this filter is the whole
+ * scoping mechanism. A `Record<collectionId, string[]>` would be a second copy of the
+ * membership the tree already holds — the denormalisation `RequestNode`'s two ids warn
+ * about — and it would have to be maintained by `addNode`, `deleteNode` and every future
+ * move, with nothing to catch it drifting. Filtering also means leaving a collection costs
+ * nothing and coming back finds its tabs where they were, because nothing was removed.
+ *
+ * Through `ownersOf`, so a render costs one cached map lookup per tab rather than a tree
+ * walk each — this is asked on every store change.
+ */
+export const tabsIn = (state: Pick<AppState, 'tree' | 'tabs'>, collectionId: string | null): string[] => {
+  if (!collectionId) return []
+  const owners = ownersOf(state.tree)
+  return state.tabs.filter(id => owners.get(id)?.id === collectionId)
+}
+
+/**
+ * Which tab is active once the rail lands on `collectionId`: the one already there, else the
+ * most recently used tab in it, else its last tab, else none.
+ *
+ * The other half of `revealPatch`'s invariant. The rule is `recentIds` for the reason the
+ * palette orders open tabs by it — coming back to a collection should return you to what you
+ * were doing in it, not to whichever tab happens to sit last in the strip. That list is
+ * capped at 12, hence the fallback, and `readPrefs` reaches for the last tab the same way
+ * when it has no valid `activeId` to restore.
+ *
+ * It records nothing. Moving the rail is not using a request, so pushing the restored tab
+ * through `remember` would reorder the MRU on every click of a collection square — and
+ * A → B → A would stop coming back to the same place.
+ */
+const activeFor = (state: Pick<AppState, 'tree' | 'tabs' | 'activeId' | 'recentIds'>, collectionId: string | null): string | null => {
+  const open = tabsIn(state, collectionId)
+  if (state.activeId && open.includes(state.activeId)) return state.activeId
+  return state.recentIds.find(id => open.includes(id)) ?? open.at(-1) ?? null
+}
+
+/**
  * Which collection the sidebar is *showing* — not the same as `activeCollectionId`.
  *
  * `CollectionRail`, `Sidebar`, `useTreeNavigation` and `readPrefs` each fall back to
@@ -665,17 +710,31 @@ export const useAppStore = create<AppState>((set, get) => ({
   // response still there when you reopen a tab is a feature, not a leak.
   closeRequest: id =>
     set(s => {
-      const index = s.tabs.indexOf(id)
       const tabs = s.tabs.filter(tab => tab !== id)
-      const activeId = s.activeId === id ? (tabs[Math.min(index, tabs.length - 1)] ?? null) : s.activeId
-      return {
-        tabs,
-        activeId,
-        recentIds: s.recentIds.filter(recent => recent !== id),
-        // Only when the neighbour tab took over. Closing a background tab must not
-        // move the sidebar out from under you.
-        ...(activeId === s.activeId ? {} : revealPatch(s.tree, activeId, s.selectedNodeId, s.activeCollectionId)),
-      }
+      const recentIds = s.recentIds.filter(recent => recent !== id)
+      // The row of the tab being closed stops being the selected one. Leaving the highlight
+      // on a request that is no longer open reads as if it were still the one in the editor,
+      // and `containerFor` would keep placing new nodes beside it. `revealPatch` overwrites
+      // this whenever a sibling takes over; this is the answer for when nothing does, which
+      // is now every last tab of a collection and not only the last tab in the workspace.
+      const closed = findRequestNodeId(s.tree, id)
+      const selectedNodeId = s.selectedNodeId === closed ? null : s.selectedNodeId
+      // Closing a background tab must not move the sidebar out from under you, and with
+      // nothing taking over there is nothing to reveal.
+      if (s.activeId !== id) return { tabs, recentIds, selectedNodeId }
+      // The successor comes from the closed tab's own collection and never from the flat
+      // list: the strip is scoped, so `tabs[index]` could hand over a request the rail is
+      // not showing, and the reveal below would then yank the rail there — the same jump
+      // the guard above exists to prevent. `collectionOf` still answers, because closing a
+      // tab is not a delete: the request is in the tree either way.
+      const siblings = tabsIn(s, collectionOf(s, id)?.id ?? null)
+      const index = siblings.indexOf(id)
+      const remaining = siblings.filter(tab => tab !== id)
+      const activeId = remaining[Math.min(index, remaining.length - 1)] ?? null
+      // The cleaned selection goes *in*, which is the whole of the fix above: `revealPatch`
+      // replaces it with the successor's row when a sibling takes over, and hands the null
+      // straight back when the collection held no other tab — leaving the rail put.
+      return { tabs, recentIds, activeId, ...revealPatch(s.tree, activeId, selectedNodeId, s.activeCollectionId) }
     }),
 
   // The sidebar follows the tab strip: the rail switches to the request's collection
@@ -688,9 +747,21 @@ export const useAppStore = create<AppState>((set, get) => ({
       recentIds: remember(s.recentIds, id),
     })),
 
-  // Clears the tree selection: it belonged to the collection being left, and
-  // leaving it set would keep `containerFor` placing new nodes in the old one.
-  selectCollection: id => set({ activeCollectionId: id, selectedNodeId: null }),
+  // The rail and the active tab are two views of one thing now. The strip shows only this
+  // collection's tabs, so the active request has to be one of them — otherwise the editor
+  // holds a request with no tab above it, and `RequestEditor`'s `aria-labelledby` points at
+  // an element that is not in the document.
+  //
+  // `revealPatch` then lands the selection on the restored tab's own row, which is a better
+  // answer for `containerFor` than the null this used to write. With nothing to restore it
+  // hands that null straight back, keeping the old behaviour for the old reason: the
+  // selection belonged to the collection being left, and leaving it set would keep
+  // `containerFor` placing new nodes in there.
+  selectCollection: id =>
+    set(s => {
+      const activeId = activeFor(s, id)
+      return { ...revealPatch(s.tree, activeId, null, id), activeId }
+    }),
 
   setSaveState: saveState => set({ saveState }),
   setSecretsAvailable: secretsAvailable => set({ secretsAvailable }),
@@ -759,12 +830,13 @@ export const useAppStore = create<AppState>((set, get) => ({
           auth: { type: 'none', token: '', username: '', password: '' },
         }
         return {
-          tree: insertNode(tree, parent, { id: nodeId, type, requestId, name: doc.name }),
+          // Through `revealPatch` rather than writing the three fields by hand: it holds the
+          // strip's invariant for whatever `parentId` a caller passes, and it expands the
+          // ancestors of a request created inside a collapsed folder.
+          ...revealPatch(insertNode(tree, parent, { id: nodeId, type, requestId, name: doc.name }), requestId, nodeId, activeCollectionId),
           documents: { ...s.documents, [requestId]: doc },
           tabs: [...s.tabs, requestId],
           activeId: requestId,
-          selectedNodeId: nodeId,
-          activeCollectionId,
           recentIds: remember(s.recentIds, requestId),
         }
       }
@@ -783,6 +855,10 @@ export const useAppStore = create<AppState>((set, get) => ({
         // A new collection becomes the one you are looking at, so the panel is not
         // still showing the previous one's contents under its name.
         activeCollectionId: type === 'collection' ? id : activeCollectionId,
+        // And it has no tabs, so nothing in it can be active. Leaving `activeId` pointing
+        // into the collection you just left is precisely the state the scoped strip exists
+        // to remove: an editor holding a request with no tab above it.
+        activeId: type === 'collection' ? null : s.activeId,
       }
     }),
 
@@ -818,9 +894,10 @@ export const useAppStore = create<AppState>((set, get) => ({
         delete requestPanels[id]
         delete responsePanels[id]
       })
-      const index = s.activeId ? s.tabs.indexOf(s.activeId) : -1
+      // Both asked before the prune, while the active request is still in the tree.
+      const home = s.activeId ? (collectionOf(s, s.activeId)?.id ?? null) : null
+      const index = s.activeId ? tabsIn(s, home).indexOf(s.activeId) : -1
       const tabs = s.tabs.filter(tab => !removed.includes(tab))
-      const activeId = s.activeId && removed.includes(s.activeId) ? (tabs[Math.min(index, tabs.length - 1)] ?? null) : s.activeId
 
       const tree = removeNode(s.tree, nodeId)
       // Deleting the collection you were looking at has to leave the rail pointing
@@ -828,6 +905,22 @@ export const useAppStore = create<AppState>((set, get) => ({
       const collections = collectionsIn(tree)
       const activeCollectionId =
         s.activeCollectionId && collections.some(c => c.id === s.activeCollectionId) ? s.activeCollectionId : (collections[0]?.id ?? null)
+
+      // Same rule as closing a tab, so a delete cannot move the rail sideways: the successor
+      // comes from the collection the deleted request lived in, asked of the pruned tree.
+      let activeId = s.activeId
+      if (s.activeId && removed.includes(s.activeId)) {
+        const remaining = tabsIn({ tree, tabs }, home)
+        activeId = remaining[Math.min(index, remaining.length - 1)] ?? null
+      }
+      // Unless that collection is what went away — then the rail has landed on a survivor,
+      // and this answers for it the way clicking its square would. Without it you would be
+      // looking at a collection with open tabs and an empty editor. Conditioned on the
+      // collection being gone rather than merely on `activeId` being null, or deleting an
+      // unrelated folder would activate a tab nobody asked for.
+      if (!activeId && home && !collections.some(c => c.id === home)) {
+        activeId = activeFor({ tree, tabs, activeId: null, recentIds: s.recentIds }, activeCollectionId)
+      }
 
       // Was only cleared when the selection *was* the deleted node, so deleting a
       // folder left `selectedNodeId` pointing inside the subtree that just went

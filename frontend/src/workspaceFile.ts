@@ -566,8 +566,15 @@ export function readPrefs(payload: unknown, documents: Record<string, RequestDoc
   // Restoring a tab for a request that no longer exists would render an empty tab
   // strip entry, so the session is filtered down to what actually survived.
   const tabs = ids(raw.tabs).filter(id => documents[id])
+  // `null` is a real answer here and not a missing one: closing the app with a collection
+  // selected and nothing open has to come back that way. This used to fall through to the
+  // last entry in `tabs`, which was right while the strip was workspace-global and is wrong
+  // now that it is scoped — that tab belongs to whatever collection happens to own it, and
+  // the `revealPatch` at the end of `hydrate` would then move the rail to meet it, throwing
+  // away the `activeCollectionId` resolved below. A stale id resolves to `null` for the same
+  // reason: the rail stays where it was left, and the tabs in it are one click from active.
   const activeCandidate = typeof raw.activeId === 'string' ? raw.activeId : null
-  const activeId = activeCandidate && tabs.includes(activeCandidate) ? activeCandidate : (tabs[tabs.length - 1] ?? null)
+  const activeId = activeCandidate && tabs.includes(activeCandidate) ? activeCandidate : null
 
   const nodeIds = new Set<string>()
   const walk = (nodes: TreeNode[]) => {

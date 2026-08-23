@@ -187,13 +187,13 @@ so the encoder sits beside the decoder it has to agree with (`template.ts` impor
 request belongs to. `environments.ts` turns that into a resolver. `templateEditor.ts` is the
 only module that knows both plus CodeMirror.
 
-**Resolution keys off the request's own collection, never the rail's.** `RequestTabs`
-iterates `tabs` unfiltered and `selectCollection` moves the rail without touching
-`activeId`, so keying a send off the rail would make Ctrl+Enter mean something other than
-what the editor shows. `environmentFor` therefore has no fallback where `collectionInPlay`
-— the *interface* question — does; that asymmetry is deliberate and documented in
-`environments.ts`. `deleteEnvironment` and `readTree` both drop a stale pick to `null` and
-never promote a survivor, for the same reason.
+**Resolution keys off the request's own collection, never the rail's.** The two answers
+now coincide — see Tab scoping below — but they are different questions, and keying a send
+off the rail would be keying it off the interface rather than off the request. So
+`environmentFor` has no fallback where `collectionInPlay` — the *interface* question —
+does; that asymmetry is deliberate and documented in `environments.ts`, and it is not a
+workaround for the shape that went away. `deleteEnvironment` and `readTree` both drop a
+stale pick to `null` and never promote a survivor, for the same reason.
 
 Go never learns variables exist: `buildRequest` reads every string verbatim, so one pass
 over the DTO in `toRequestDTO(request, resolve)` covers the whole surface — and because
@@ -245,6 +245,45 @@ keeps plain `<input>`s: its values are resolved, but it is a form rather than a 
 contenteditable cannot mask a password, and a `<label>` does not associate with a wrapper
 div. `description` keeps its `<input>` too — it is prose, and CodeMirror hard-wires
 `spellcheck` off.
+
+### Tab scoping
+
+The tab strip shows one collection's requests: the collection the rail is showing, which is
+`shownCollection` and not `activeCollectionId` raw. **Nothing is stored per collection.**
+`tabs` is still one flat ordered list in `ui.json` and `tabsIn(state, collectionId)` filters
+it through the `ownersOf` cache — a `Record<collectionId, string[]>` would be a second copy
+of membership the tree already holds, maintained by hand at every writer. Filtering is also
+why leaving a collection keeps its tabs: nothing was removed, so coming back finds them as
+they were. `RequestTabs` selects the three primitives and derives in a `useMemo`, because a
+selector returning a fresh array has no stable snapshot for zustand.
+
+`revealPatch`'s invariant closes in both directions now. It still pulls the rail to the
+active tab, and `activeFor` pulls the active tab to the rail — the MRU tab of the collection
+being entered, else its last, else none, which is the existing `editor.empty.*` placeholder.
+So `activeId`, when set, always names a request in the shown collection; `RequestEditor`'s
+`aria-labelledby={requestTabId(activeId)}` would otherwise point at an element that is not
+in the document. Every writer of `activeId` holds both halves: `openRequest`, `setActive`,
+`closeRequest`, `selectCollection`, `addNode`, `deleteNode`, and `hydrate`.
+
+**A launch is the one thing that does not promote a tab.** Clicking into a collection asks
+`activeFor` for its MRU tab, but `readPrefs` treats a persisted `activeId: null` as an
+answer rather than a missing value, so the app reopens on the collection and in the state it
+was closed in. Its old fallback to the last entry in `tabs` was right while the strip was
+global and reached into another collection once it was scoped — `hydrate`'s `revealPatch`
+then moved the rail to meet that tab and discarded the restored `activeCollectionId`.
+`closeRequest` clears `selectedNodeId` for the same class of reason: a highlighted row under
+a tab that is no longer open claims to be what the editor is showing.
+
+The two successor rules are the subtle part. `closeRequest` and `deleteNode` pick the
+neighbour from `tabsIn` of the *closed request's own* collection, never from the flat list —
+`tabs[index]` could hand over a request the rail is not showing and the reveal would then
+yank the rail there. `deleteNode` has one more case: when the deleted node was the
+collection itself, the rail lands on a survivor and `activeFor` answers for that one, or you
+would be looking at a collection with open tabs and an empty editor.
+
+The command palette stays workspace-global on purpose. Listing every open tab across
+collections is *how* you cross between them, and `openRequest` reveals into whichever
+collection owns the request.
 
 ### Response formats
 
