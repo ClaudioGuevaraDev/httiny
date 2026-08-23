@@ -1376,3 +1376,9 @@ export const treeActions = {
   addNode: (type: 'collection' | 'folder' | 'request', parentId?: string) => useAppStore.getState().addNode(type, parentId),
   askConfirm: (intent: ConfirmIntent) => useAppStore.getState().askConfirm(intent),
 }
+
+/** The same, for the tab strip. Separate only so each name says which surface it serves. */
+export const tabActions = {
+  setActive: (requestId: string) => useAppStore.getState().setActive(requestId),
+  closeRequest: (requestId: string) => useAppStore.getState().closeRequest(requestId),
+}

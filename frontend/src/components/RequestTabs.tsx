@@ -1,11 +1,77 @@
-import { useMemo } from 'react'
+import { memo, useMemo } from 'react'
 import { X } from 'lucide-react'
 import { requestTabId } from '../domIds'
+import type { Translate } from '../i18n'
 import { useT } from '../language'
 import { cancelRequest } from '../requestRunner'
-import { shownCollection, tabsIn, useAppStore } from '../store'
+import { shownCollection, tabActions, tabsIn, useAppStore } from '../store'
 import { useRovingFocus } from '../useRovingFocus'
 import { MethodChip } from './MethodChip'
+
+/**
+ * One tab, subscribed to its own request and nothing else.
+ *
+ * The strip used to select the whole `documents` record and index into it, which meant a
+ * character typed anywhere — in a background tab, in another collection — gave `documents`
+ * a new identity and re-created every tab, its chip and its interpolated label. `tabs` is
+ * capped by nothing, so twenty open tabs was ~200 elements per keystroke.
+ *
+ * **Two primitive selectors and not one for the document.** `s.documents[id]` would be
+ * correct and would re-render only this tab — but it changes identity on every keystroke in
+ * *this* request, including edits to the URL or the body that the strip does not show. The
+ * name and the method are the only two things a tab renders, so they are the only two it
+ * watches. Same reasoning as `RequestMethodChip` in the sidebar, at the other end of the
+ * window.
+ *
+ * A tab whose document has gone renders nothing. That is not defensive padding: `tabsIn`
+ * filters `tabs` against the tree, and the two can disagree for a render while a delete
+ * settles.
+ */
+const RequestTab = memo(function RequestTab({ id, active, tabbable, t }: { id: string; active: boolean; tabbable: boolean; t: Translate }) {
+  const method = useAppStore(s => s.documents[id]?.method)
+  const name = useAppStore(s => s.documents[id]?.name)
+  if (method === undefined || name === undefined) return null
+
+  // No confirmation: edits are already on disk, and closing a tab has never
+  // deleted anything — the request stays in the tree and reopens with its
+  // content intact.
+  const close = () => {
+    cancelRequest(id)
+    tabActions.closeRequest(id)
+  }
+
+  return (
+    /*
+      This was one <button> containing a nested <span role="button"> for the
+      close control: invalid HTML, and assistive tech announced the pair as a
+      single control. It is now a plain container with two real sibling
+      buttons, so each is separately reachable and labelled.
+
+      The container is `presentation` because a tablist may only contain tabs, and
+      the close button is not one. Arrow keys move between tabs; the active tab is
+      the strip's only tab stop, and activation is manual (Enter or Space) so
+      arrowing past a request does not load it.
+    */
+    <div role="presentation" className={`request-tab ${active ? 'active' : ''}`}>
+      <button
+        type="button"
+        role="tab"
+        id={requestTabId(id)}
+        aria-selected={active}
+        aria-controls="request-editor-panel"
+        tabIndex={tabbable ? 0 : -1}
+        className="tab-main"
+        onClick={() => tabActions.setActive(id)}
+      >
+        <MethodChip method={method} variant="compact" decorative />
+        <span className="truncate">{name}</span>
+      </button>
+      <button type="button" className="tab-close" aria-label={t('tabs.close', { name })} onClick={close}>
+        <X size={13} aria-hidden="true" />
+      </button>
+    </div>
+  )
+})
 
 /**
  * One collection's open requests, and never another's.
@@ -32,9 +98,6 @@ export function RequestTabs() {
   const tabs = useAppStore(s => s.tabs)
   const activeCollectionId = useAppStore(s => s.activeCollectionId)
   const activeId = useAppStore(s => s.activeId)
-  const documents = useAppStore(s => s.documents)
-  const setActive = useAppStore(s => s.setActive)
-  const closeRequest = useAppStore(s => s.closeRequest)
   const onKeyDown = useRovingFocus('[role="tab"]')
 
   const visible = useMemo(() => tabsIn({ tree, tabs }, shownCollection({ tree, activeCollectionId })?.id ?? null), [tree, tabs, activeCollectionId])
@@ -49,48 +112,9 @@ export function RequestTabs() {
 
   return (
     <div className="request-tabs" role="tablist" aria-label={t('tabs.list')} onKeyDown={onKeyDown}>
-      {visible.map(id => {
-        const doc = documents[id]
-        if (!doc) return null
-        // No confirmation: edits are already on disk, and closing a tab has never
-        // deleted anything — the request stays in the tree and reopens with its
-        // content intact.
-        const close = () => {
-          cancelRequest(id)
-          closeRequest(id)
-        }
-        return (
-          /*
-            This was one <button> containing a nested <span role="button"> for the
-            close control: invalid HTML, and assistive tech announced the pair as a
-            single control. It is now a plain container with two real sibling
-            buttons, so each is separately reachable and labelled.
-
-            The container is `presentation` because a tablist may only contain tabs, and
-            the close button is not one. Arrow keys move between tabs; the active tab is
-            the strip's only tab stop, and activation is manual (Enter or Space) so
-            arrowing past a request does not load it.
-          */
-          <div key={id} role="presentation" className={`request-tab ${id === activeId ? 'active' : ''}`}>
-            <button
-              type="button"
-              role="tab"
-              id={requestTabId(id)}
-              aria-selected={id === activeId}
-              aria-controls="request-editor-panel"
-              tabIndex={id === stop ? 0 : -1}
-              className="tab-main"
-              onClick={() => setActive(id)}
-            >
-              <MethodChip method={doc.method} variant="compact" decorative />
-              <span className="truncate">{doc.name}</span>
-            </button>
-            <button type="button" className="tab-close" aria-label={t('tabs.close', { name: doc.name })} onClick={close}>
-              <X size={13} aria-hidden="true" />
-            </button>
-          </div>
-        )
-      })}
+      {visible.map(id => (
+        <RequestTab key={id} id={id} active={id === activeId} tabbable={id === stop} t={t} />
+      ))}
       <div role="presentation" className="tabs-spacer" />
     </div>
   )

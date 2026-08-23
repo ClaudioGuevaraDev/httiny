@@ -130,6 +130,10 @@ export async function saveResponseBody(request: SaveBodyRequest): Promise<{ ok: 
 export function installOrphanAbort(): void {
   useAppStore.subscribe((state, prev) => {
     if (state.documents === prev.documents) return
+    // `documents` changing identity *is* a keystroke, so the guard above never fires on the
+    // hot path — and the spread below allocates whether or not anything is in flight, which
+    // it usually is not. The copy itself has to stay: the loop deletes from the map.
+    if (controllers.size === 0) return
     for (const [id, controller] of [...controllers]) {
       if (state.documents[id]) continue
       controller.abort()

@@ -1,3 +1,4 @@
+import { useMemo } from 'react'
 import { Code2, Send, Square, Upload } from 'lucide-react'
 import type { MessageKey } from '../i18n'
 import { useT } from '../language'
@@ -49,6 +50,24 @@ const PANEL_LABEL = {
 
 /** Two roots, not one: the count renders under Params (m.) and Headers (f.), and Spanish agrees. */
 const PANEL_COUNT = { params: 'editor.panel.paramsEnabled', headers: 'editor.panel.headersEnabled' } as const
+
+/** The strip's order. Out here so the array is not re-allocated on every keystroke. */
+const PANELS = ['params', 'headers', 'body', 'auth'] as const satisfies readonly Panel[]
+
+/**
+ * The method picker's options, built once.
+ *
+ * Nothing here depends on props, state or the locale — HTTP methods are on the list of
+ * things this app does not translate — but it used to be rebuilt inside the render body,
+ * so every keystroke in the URL bar minted seven objects and seven `MethodChip` elements.
+ * `Select` renders its whole option list into an always-mounted popover whether or not it
+ * is open, so those were reconciled every time too.
+ */
+const METHOD_OPTIONS = methodOptions.map(method => ({
+  value: method,
+  label: method,
+  glyph: <MethodChip method={method} variant="ghost" decorative />,
+}))
 
 /**
  * Params and Headers, over the shared grid.
@@ -229,6 +248,13 @@ export function RequestEditor() {
   const sending = useAppStore(s => (s.activeId ? s.responses[s.activeId]?.state === 'loading' : false))
   const onPanelKeyDown = useRovingFocus('[role="tab"]')
 
+  // The two badge counts, memoised: the panel strip re-renders on every keystroke and
+  // these were two full passes over the row arrays, allocating two arrays each time. Keyed
+  // on the row arrays rather than on the document, so typing in the URL or the body does
+  // not recount. Above the early return below, as hooks must be.
+  const paramCount = useMemo(() => (request?.params ?? []).filter(row => row.enabled && row.key).length, [request?.params])
+  const headerCount = useMemo(() => (request?.headers ?? []).filter(row => row.enabled && row.key).length, [request?.headers])
+
   if (!request || !activeId)
     return (
       <div className="request-editor">
@@ -278,11 +304,7 @@ export function RequestEditor() {
           variant="method"
           ariaLabel={t('editor.method')}
           value={request.method}
-          options={methodOptions.map(method => ({
-            value: method,
-            label: method,
-            glyph: <MethodChip method={method} variant="ghost" decorative />,
-          }))}
+          options={METHOD_OPTIONS}
           onChange={method => updateDocument(activeId, { method })}
         />
         {/* A stable id, so the INVALID_URL placeholder can focus this field without
@@ -352,8 +374,8 @@ export function RequestEditor() {
         </button>
       </div>
       <div className="panel-tabs" role="tablist" aria-label={t('editor.sections')} onKeyDown={onPanelKeyDown}>
-        {(['params', 'headers', 'body', 'auth'] as const).map(panel => {
-          const count = panel === 'params' || panel === 'headers' ? request[panel].filter(r => r.enabled && r.key).length : null
+        {PANELS.map(panel => {
+          const count = panel === 'params' ? paramCount : panel === 'headers' ? headerCount : null
           return (
             <button
               type="button"
