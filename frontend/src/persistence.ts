@@ -465,7 +465,7 @@ function applySecrets(loaded: LoadedWorkspace, secrets: readonly Secret[], varia
   }
   if (!values.size) return
 
-  // A root-level `map`, not `mapTree`: collections are always roots, and rebuilding every
+  // A root-level `map`, not a spine rebuild: collections are always roots, and rebuilding every
   // node would leave nothing with a shared identity for `revealPatch` and the autosave
   // guard to compare against.
   loaded.tree = loaded.tree.map(node =>

@@ -79,10 +79,10 @@ Hydration runs in `main.tsx` **before** `createRoot`, and the autosave subscribe
 
 State: one Zustand store (`src/store.ts`) owns everything shared. Two parallel structures:
 
-- `tree: TreeNode[]` — the sidebar hierarchy (collection / folder / request), recursively transformed by the local `mapTree` / `insertNode` / `removeNode` helpers. All updates are immutable rebuilds of the affected path.
+- `tree: TreeNode[]` — the sidebar hierarchy (collection / folder / request), transformed by the local `updateNode` / `insertNode` / `removeNode` / `expandPath` helpers, and searched by `locate` (one descent returning the node, its ancestor trail and whether any ancestor is collapsed — `revealPatch` used to ask those three questions with three traversals plus a `findNode` per ancestor). All updates copy **only the spine** from the root to the changed node, so untouched siblings and untouched collections keep their identity; that is what makes `memo` on a sidebar row bite, and it is why `updateNode` returns its input unchanged when the id names nothing. The predecessor, `mapTree`, rebuilt every node in the forest to flip one boolean.
 - `documents: Record<string, RequestDocument>` — request payloads keyed by **request id**, plus `tabs` (ordered request ids), `activeId`, and `responses` keyed by the same request id.
 
-A `RequestNode` therefore carries two ids: its own `id` (tree node identity) and `requestId` (document key). Getting them crossed is the easiest bug to introduce here. `findRequestNodeId` resolves the real node id for selection, so it works for requests created through `addNode` and not only for seeded ids.
+A `RequestNode` therefore carries two ids: its own `id` (tree node identity) and `requestId` (document key). Getting them crossed is the easiest bug to introduce here. `locateRequest` resolves the real node id for selection, so it works for requests created through `addNode` and not only for seeded ids.
 
 The store starts genuinely empty (`tree: []`, `documents: {}`, `activeId: null`) and is filled by hydration. `addNode` resolves a default parent via `containerFor` when the caller does not name one — do **not** reintroduce a hardcoded parent id: three call sites used to pass `'main'`, a fixture collection, and `insertNode` silently returns the tree unchanged when the parent is missing.
 
@@ -215,9 +215,10 @@ what node ownership buys: the identity clause names every field of `ResolutionSt
 it `setBody` would reach the listener on every body keystroke, and the listener dispatches
 into the view that is mid-update), and the derived clause compares the resolved `Environment`
 object — which catches a retyped row, a switched pick and a tab moving collections, and
-rejects a folder expand for free because `mapTree` copies a collection node as `{ ...node }`
-and the `Environment` inside it is the same object. **A `mapTree` callback must therefore
-never rebuild a collection node from its parts.**
+rejects a folder expand for free because `updateNode` copies a collection node as
+`{ ...node }` and the `Environment` inside it is the same object. **An `updateNode` callback
+must therefore never rebuild a collection node from its parts.** Spine-only rebuilds only
+widen that guarantee — a collection off the changed path is not copied at all.
 
 Locked variables go to the credential store keyed `env:<collectionId>:<envId>:<varKey>`, one
 entry per variable — `secrets.Set` rejects anything over 2560 bytes, so a blob per

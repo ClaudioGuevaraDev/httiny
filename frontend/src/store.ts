@@ -363,23 +363,91 @@ interface AppState {
   runConfirm: () => void
 }
 
-const mapTree = (nodes: TreeNode[], fn: (node: TreeNode) => TreeNode): TreeNode[] =>
-  nodes.map(n => {
-    const node = fn(n)
-    return node.type !== 'request' ? { ...node, children: mapTree(node.children, fn) } : node
-  })
+/**
+ * One node, replaced, copying only the spine from the root down to it.
+ *
+ * This replaced a `mapTree` that rebuilt **every node in the whole forest** — every
+ * collection, not only the one being touched — to flip one boolean. Untouched siblings
+ * and untouched collections now keep their identity, which is what lets the sidebar's
+ * rows be `memo`ised at all: a row whose `node` is referentially equal has nothing to
+ * re-render for.
+ *
+ * Returns `nodes` itself when the id names nothing, and when `fn` hands back the node it
+ * was given. That is not just an optimisation: `insertNode` relies on it to stay a no-op
+ * when asked to insert under a request, and a new root identity would schedule a
+ * whole-workspace serialisation for a change that never happened.
+ *
+ * **The callback inherits `mapCollection`'s rule** (below): it must spread the node it is
+ * handed and must never rebuild a collection from its parts. `subscribeEnvironment`
+ * compares the resolved `Environment` object, and that object only survives because
+ * `{ ...node }` carries it through. Rebuild one and every mounted `TemplateInput` is
+ * handed a fresh variable map on every rename.
+ */
+const updateNode = (nodes: TreeNode[], id: string, fn: (node: TreeNode) => TreeNode): TreeNode[] => {
+  for (let i = 0; i < nodes.length; i++) {
+    const node = nodes[i]
+    if (node.id === id) {
+      const replaced = fn(node)
+      if (replaced === node) return nodes
+      const next = [...nodes]
+      next[i] = replaced
+      return next
+    }
+    if (node.type === 'request') continue
+    const children = updateNode(node.children, id, fn)
+    if (children === node.children) continue
+    const next = [...nodes]
+    next[i] = { ...node, children }
+    return next
+  }
+  return nodes
+}
 
-const removeNode = (nodes: TreeNode[], id: string): TreeNode[] =>
-  nodes.filter(n => n.id !== id).map(n => (n.type === 'request' ? n : { ...n, children: removeNode(n.children, id) }))
+/** The same spine-only rebuild, removing instead of replacing. `nodes` unchanged on a miss. */
+const removeNode = (nodes: TreeNode[], id: string): TreeNode[] => {
+  for (let i = 0; i < nodes.length; i++) {
+    const node = nodes[i]
+    if (node.id === id) return [...nodes.slice(0, i), ...nodes.slice(i + 1)]
+    if (node.type === 'request') continue
+    const children = removeNode(node.children, id)
+    if (children === node.children) continue
+    const next = [...nodes]
+    next[i] = { ...node, children }
+    return next
+  }
+  return nodes
+}
+
+/**
+ * Expands every id along one root-to-node path, copying only that path.
+ *
+ * Walks the path rather than searching for each id in turn, so it is one descent and not
+ * one full-tree search per ancestor. `revealPatch` is the only caller and hands it the
+ * trail `locate` produced from the same walk.
+ */
+const expandPath = (nodes: TreeNode[], path: readonly string[], depth = 0): TreeNode[] => {
+  const id = path[depth]
+  if (id === undefined) return nodes
+  for (let i = 0; i < nodes.length; i++) {
+    const node = nodes[i]
+    if (node.id !== id || node.type === 'request') continue
+    const children = expandPath(node.children, path, depth + 1)
+    if (children === node.children && node.expanded) return nodes
+    const next = [...nodes]
+    next[i] = { ...node, expanded: true, children }
+    return next
+  }
+  return nodes
+}
 
 /**
  * One collection, replaced.
  *
- * A flat `map` and not `mapTree`, for two reasons. A collection is always a root node —
- * `addNode` forces it and `adopt` repairs it — so there is nothing to recurse into. And
- * every other node has to keep its identity: `subscribeEnvironment` compares the
- * resolved `Environment` object, which only survives because a copy of an untouched
- * node is not made at all.
+ * A flat `map` and not `updateNode`, because a collection is always a root node —
+ * `addNode` forces it and `adopt` repairs it — so there is nothing to descend into. The
+ * identity argument that used to be the second reason is now the house rule rather than
+ * a local one: `updateNode` copies only the spine, so untouched nodes keep their identity
+ * everywhere, and `subscribeEnvironment` can go on comparing the resolved `Environment`.
  */
 const mapCollection = (nodes: TreeNode[], id: string, fn: (collection: CollectionNode) => CollectionNode): TreeNode[] =>
   nodes.map(node => (node.type === 'collection' && node.id === id ? fn(node) : node))
@@ -393,38 +461,60 @@ const mapEnvironment = (nodes: TreeNode[], collectionId: string, envId: string, 
 
 const insertNode = (nodes: TreeNode[], parentId: string | undefined, child: TreeNode): TreeNode[] => {
   if (!parentId) return [...nodes, child]
-  return nodes.map(n =>
-    n.id === parentId && n.type !== 'request'
-      ? { ...n, expanded: true, children: [...n.children, child] }
-      : n.type === 'request'
-        ? n
-        : { ...n, children: insertNode(n.children, parentId, child) },
-  )
+  // Returning the node untouched when the parent is a request is what keeps this a no-op
+  // there, the way the old whole-forest rebuild was — `updateNode` turns an unchanged node
+  // into an unchanged tree.
+  return updateNode(nodes, parentId, node => (node.type === 'request' ? node : { ...node, expanded: true, children: [...node.children, child] }))
 }
 
-/** The tree node pointing at a given document, or null if it has been deleted. */
-const findRequestNodeId = (nodes: TreeNode[], requestId: string): string | null => {
-  for (const node of nodes) {
-    if (node.type === 'request') {
-      if (node.requestId === requestId) return node.id
-      continue
-    }
-    const found = findRequestNodeId(node.children, requestId)
-    if (found) return found
-  }
-  return null
+/**
+ * A node found in the forest, plus everything its callers used to re-walk the tree for.
+ *
+ * `revealPatch` used to ask three separate questions — where is this request, what are its
+ * ancestors, is any of them collapsed — and pay a full traversal for each, plus one more
+ * per ancestor. They are all answered by a single descent, so they are answered together.
+ */
+export interface TreeHit {
+  node: TreeNode
+  /** Ancestor ids, outermost first. `[0]` is the collection: collections are always roots. */
+  ancestors: readonly string[]
+  /** Whether any **ancestor** is collapsed — deliberately not the node's own `expanded`. */
+  collapsedAncestor: boolean
 }
 
-export const findNode = (nodes: TreeNode[], id: string): TreeNode | null => {
-  for (const node of nodes) {
-    if (node.id === id) return node
-    if (node.type !== 'request') {
-      const found = findNode(node.children, id)
+/**
+ * One descent, one hit.
+ *
+ * The trail is a single mutable array pushed and popped along the way rather than a fresh
+ * `[...trail, id]` per level, and it is copied exactly once: when something matches.
+ */
+const locate = (nodes: readonly TreeNode[], match: (node: TreeNode) => boolean): TreeHit | null => {
+  const trail: string[] = []
+  let collapsed = 0
+  const walk = (siblings: readonly TreeNode[]): TreeHit | null => {
+    for (const node of siblings) {
+      if (match(node)) return { node, ancestors: [...trail], collapsedAncestor: collapsed > 0 }
+      if (node.type === 'request') continue
+      trail.push(node.id)
+      if (!node.expanded) collapsed++
+      const found = walk(node.children)
+      if (!node.expanded) collapsed--
+      trail.pop()
       if (found) return found
     }
+    return null
   }
-  return null
+  return walk(nodes)
 }
+
+export const locateNode = (nodes: readonly TreeNode[], id: string): TreeHit | null => locate(nodes, node => node.id === id)
+
+/** The tree node pointing at a given document, or null if it has been deleted. */
+const locateRequest = (nodes: readonly TreeNode[], requestId: string): TreeHit | null =>
+  locate(nodes, node => node.type === 'request' && node.requestId === requestId)
+
+/** Kept as its own name because `ConfirmDialog` selects on it and wants only the node. */
+export const findNode = (nodes: TreeNode[], id: string): TreeNode | null => locateNode(nodes, id)?.node ?? null
 
 /** Every document id in a subtree, so deleting a folder prunes its requests too. */
 export const requestIdsIn = (node: TreeNode): string[] => (node.type === 'request' ? [node.requestId] : node.children.flatMap(requestIdsIn))
@@ -454,18 +544,6 @@ export const flattenVisible = (nodes: TreeNode[], depth = 0, parentId: string | 
     return node.type !== 'request' && node.expanded ? [row, ...flattenVisible(node.children, depth + 1, node.id)] : [row]
   })
 
-/** Ids of every ancestor of `id`, outermost first — used to expand a revealed row. */
-const ancestorIds = (nodes: TreeNode[], id: string, trail: string[] = []): string[] | null => {
-  for (const node of nodes) {
-    if (node.id === id) return trail
-    if (node.type !== 'request') {
-      const found = ancestorIds(node.children, id, [...trail, node.id])
-      if (found) return found
-    }
-  }
-  return null
-}
-
 const remember = (recentIds: string[], id: string): string[] => [id, ...recentIds.filter(recent => recent !== id)].slice(0, 12)
 
 /**
@@ -494,22 +572,18 @@ const remember = (recentIds: string[], id: string): string[] => [id, ...recentId
  * reading one harmless. Exported for that one caller.
  */
 export const revealPatch = (tree: TreeNode[], requestId: string | null, selectedNodeId: string | null, activeCollectionId: string | null) => {
-  const nodeId = requestId ? findRequestNodeId(tree, requestId) : null
-  if (!nodeId) return { tree, selectedNodeId, activeCollectionId }
-  const ancestors = ancestorIds(tree, nodeId) ?? []
-  // Only rebuild the tree when something is actually collapsed. `mapTree` gives every
-  // node a new identity, and the autosave subscriber serialises the whole workspace
-  // the moment `tree` changes reference (persistence.ts:116) — too much for a click
-  // on a tab that reveals nothing.
-  const collapsed = ancestors.some(id => {
-    const node = findNode(tree, id)
-    return node !== null && node.type !== 'request' && !node.expanded
-  })
+  const hit = requestId ? locateRequest(tree, requestId) : null
+  if (!hit) return { tree, selectedNodeId, activeCollectionId }
+  // Still only rebuilding when something is actually collapsed, and for the same reason:
+  // the autosave subscriber serialises the whole workspace the moment `tree` changes
+  // reference, which is too much for a click on a tab that reveals nothing. What changed
+  // is that the question is answered by the same descent that found the node, instead of
+  // costing a `findNode` per ancestor level on top of two full traversals.
   return {
-    tree: collapsed ? mapTree(tree, n => (n.type !== 'request' && ancestors.includes(n.id) ? { ...n, expanded: true } : n)) : tree,
-    selectedNodeId: nodeId,
+    tree: hit.collapsedAncestor ? expandPath(tree, hit.ancestors) : tree,
+    selectedNodeId: hit.node.id,
     // `ancestors[0]` is the collection: collections are always root nodes.
-    activeCollectionId: ancestors[0] ?? activeCollectionId,
+    activeCollectionId: hit.ancestors[0] ?? activeCollectionId,
   }
 }
 
@@ -526,9 +600,9 @@ export const revealPatch = (tree: TreeNode[], requestId: string | null, selected
  */
 const containerFor = (nodes: TreeNode[], selectedNodeId: string | null, activeCollectionId: string | null): string | undefined => {
   if (selectedNodeId) {
-    const node = findNode(nodes, selectedNodeId)
-    if (node && node.type !== 'request') return node.id
-    const parent = ancestorIds(nodes, selectedNodeId)?.at(-1)
+    const hit = locateNode(nodes, selectedNodeId)
+    if (hit && hit.node.type !== 'request') return hit.node.id
+    const parent = hit?.ancestors.at(-1)
     if (parent) return parent
   }
   // Falling back to the active collection rather than the root is what keeps a new
@@ -578,19 +652,25 @@ const requestOwners = (nodes: TreeNode[]): Map<string, CollectionNode> => {
  * subscription guard asks the same question of `state` and of `previous`; a cache that
  * read `getState()` would answer both with the current tree.
  *
- * Identity is a sound key because nothing mutates a `TreeNode` in place: `mapTree`,
- * `insertNode`, `removeNode` and `mapCollection` are all copy-on-write. `toggleNode`
- * therefore rebuilds this on every folder expand — harmless precisely because the guard
- * compares the resolved `Environment`, and that object survives the copy.
+ * Identity is a sound key because nothing mutates a `TreeNode` in place: `updateNode`,
+ * `insertNode`, `removeNode`, `expandPath` and `mapCollection` are all copy-on-write.
+ * `toggleNode` therefore rebuilds this on every folder expand — harmless precisely because
+ * the guard compares the resolved `Environment`, and that object survives the copy.
+ *
+ * **Two slots, not one**, and that is not a general-purpose cache size. `subscribeEnvironment`
+ * asks `environmentInPlay(previous)` and then `environmentInPlay(state)` in the same
+ * notification, so a single slot was rebuilt twice on every tree change: once for the tree
+ * that had just been replaced, once for its replacement. Two slots make the first of that
+ * pair a hit. A third would buy nothing — nobody asks about a tree two generations old.
  */
-let ownerTree: TreeNode[] | null = null
-let owners: ReadonlyMap<string, CollectionNode> = new Map()
+type OwnerSlot = { tree: TreeNode[]; owners: ReadonlyMap<string, CollectionNode> }
+let ownerSlots: OwnerSlot[] = []
 const ownersOf = (tree: TreeNode[]): ReadonlyMap<string, CollectionNode> => {
-  if (ownerTree !== tree) {
-    ownerTree = tree
-    owners = requestOwners(tree)
-  }
-  return owners
+  const hit = ownerSlots.find(slot => slot.tree === tree)
+  if (hit) return hit.owners
+  const slot: OwnerSlot = { tree, owners: requestOwners(tree) }
+  ownerSlots = [slot, ...ownerSlots].slice(0, 2)
+  return slot.owners
 }
 
 /** The collection a request lives in, or null when it is not in the tree. */
@@ -731,7 +811,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       // and `containerFor` would keep placing new nodes beside it. `revealPatch` overwrites
       // this whenever a sibling takes over; this is the answer for when nothing does, which
       // is now every last tab of a collection and not only the last tab in the workspace.
-      const closed = findRequestNodeId(s.tree, id)
+      const closed = locateRequest(s.tree, id)?.node.id ?? null
       const selectedNodeId = s.selectedNodeId === closed ? null : s.selectedNodeId
       // Closing a background tab must not move the sidebar out from under you, and with
       // nothing taking over there is nothing to reveal.
@@ -791,7 +871,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   // of whichever body type is not being edited.
   setBody: (id, patch) => set(s => ({ documents: { ...s.documents, [id]: { ...s.documents[id], body: { ...s.documents[id].body, ...patch } } } })),
 
-  toggleNode: nodeId => set(s => ({ tree: mapTree(s.tree, n => (n.id === nodeId && n.type !== 'request' ? { ...n, expanded: !n.expanded } : n)) })),
+  toggleNode: nodeId => set(s => ({ tree: updateNode(s.tree, nodeId, n => (n.type !== 'request' ? { ...n, expanded: !n.expanded } : n)) })),
 
   addNode: (type, parentId, name) =>
     set(s => {
@@ -877,9 +957,10 @@ export const useAppStore = create<AppState>((set, get) => ({
   renameNode: (nodeId, name) =>
     set(s => {
       let requestId: string | undefined
-      const tree = mapTree(s.tree, n => {
-        if (n.id !== nodeId) return n
+      const tree = updateNode(s.tree, nodeId, n => {
         if (n.type === 'request') requestId = n.requestId
+        // A spread, which is what carries a collection's `environments` through untouched —
+        // see the rule on `updateNode`.
         return { ...n, name }
       })
       return { tree, documents: requestId ? { ...s.documents, [requestId]: { ...s.documents[requestId], name } } : s.documents }

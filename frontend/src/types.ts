@@ -14,9 +14,9 @@ export type TreeNode = CollectionNode | FolderNode | RequestNode
  * buys is that `removeNode` deletes a collection's environments with the collection,
  * `WorkspaceState` gains no field, and `readWorkspace`/`readPrefs` keep their signatures.
  *
- * `mapTree` copies a node as `{ ...node, expanded }`, so `environments` survives a folder
+ * `updateNode` copies a node as `{ ...node, expanded }`, so `environments` survives a folder
  * expand **by reference** — which is what `subscribeEnvironment` compares, and why a
- * `mapTree` callback must never rebuild a collection node from its parts.
+ * `updateNode` callback must never rebuild a collection node from its parts.
  *
  * `activeEnvironmentId` is here and not in `ui.json`. It decides which host a send
  * reaches and which token signs it, so it is workspace data the way `auth.type` is, not

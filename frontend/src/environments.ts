@@ -69,9 +69,9 @@ export const resolveFor = (requestId: string): Resolve => {
  * The **derived** clause compares the resolved `Environment` object, and that single
  * comparison covers three cases at once: a retyped row (`setEnvironmentVariables` rebuilds
  * the object), a switched pick, and a tab that moved to another collection. It rejects a
- * folder expand for free, because `mapTree` copies a collection node as `{ ...node }` and
+ * folder expand for free, because `updateNode` copies a collection node as `{ ...node }` and
  * the `Environment` inside it is the same object — the invariant `CollectionNode`'s doc
- * comment states, and the reason a `mapTree` callback must never rebuild one from its
+ * comment states, and the reason an `updateNode` callback must never rebuild one from its
  * parts. A pool with an identity of its own needed a third clause for the first case and
  * could not use `tree` for the last.
  *
