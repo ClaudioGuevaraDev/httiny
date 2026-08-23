@@ -1298,3 +1298,23 @@ export const freshRow = (): KeyValueRow => ({ id: crypto.randomUUID(), enabled: 
 export const freshVariable = (): EnvironmentVariable => ({ id: crypto.randomUUID(), enabled: true, key: '', value: '', secret: false })
 
 export const methodOptions: HttpMethod[] = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD', 'OPTIONS']
+
+/**
+ * The actions a sidebar row needs, reached without subscribing to anything.
+ *
+ * A zustand action's identity is fixed when the store is created, so
+ * `useAppStore(s => s.addNode)` installs a listener that can never fire — but under v5
+ * every listener's selector still runs on every `set()`, and there were five of these per
+ * tree row. Windowing bounds that to the rows on screen, which is the fix that matters;
+ * this removes the ones that were pure waste even before it.
+ *
+ * Read through `getState()` at call time rather than captured here, so nothing depends on
+ * this module's evaluation order relative to hydration.
+ */
+export const treeActions = {
+  openRequest: (requestId: string) => useAppStore.getState().openRequest(requestId),
+  toggleNode: (nodeId: string) => useAppStore.getState().toggleNode(nodeId),
+  renameNode: (nodeId: string, name: string) => useAppStore.getState().renameNode(nodeId, name),
+  addNode: (type: 'collection' | 'folder' | 'request', parentId?: string) => useAppStore.getState().addNode(type, parentId),
+  askConfirm: (intent: ConfirmIntent) => useAppStore.getState().askConfirm(intent),
+}

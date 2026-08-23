@@ -1,9 +1,9 @@
-import { useMemo, useState } from 'react'
+import { memo, useMemo, useState, type CSSProperties } from 'react'
 import { ArrowUp, Boxes, ChevronDown, ChevronRight, Folder } from 'lucide-react'
+import type { Translate } from '../i18n'
 import { useT } from '../language'
-import type { VisibleRow } from '../store'
-import { collectionsIn, useAppStore } from '../store'
-import type { CollectionNode } from '../types'
+import { collectionsIn, treeActions, useAppStore } from '../store'
+import type { CollectionNode, TreeNode } from '../types'
 import { useTreeNavigation } from '../useTreeNavigation'
 import { shortcuts } from '../shortcuts'
 import { COLLECTION_PANEL_ID, collectionTabId } from '../collections'
@@ -77,21 +77,66 @@ function UpdateBadge() {
   )
 }
 
-function TreeRow({ row, active, onFocusRow }: { row: VisibleRow; active: boolean; onFocusRow: (id: string) => void }) {
-  const { t } = useT()
-  const { node, depth, position, siblings } = row
-  const selectedNodeId = useAppStore(s => s.selectedNodeId)
-  const openRequest = useAppStore(s => s.openRequest)
-  const toggleNode = useAppStore(s => s.toggleNode)
-  const renameNode = useAppStore(s => s.renameNode)
-  // Read the method from the document rather than the node. `RequestNode.method`
-  // used to be a denormalised copy that nothing kept in sync, so changing the method
-  // in the editor left the tree showing the old one.
-  const method = useAppStore(s => (node.type === 'request' ? s.documents[node.requestId]?.method : undefined))
-  const [renaming, setRenaming] = useState(false)
-  const selected = selectedNodeId === node.id
+/**
+ * The one part of a row that has to watch `documents`, in a component of its own.
+ *
+ * Read from the document rather than the node, for the reason `RequestNode.method` stopped
+ * existing: it was a denormalised copy that nothing kept in sync, so changing the method in
+ * the editor left the tree showing the old one.
+ *
+ * It stays a per-row subscription rather than being lifted, because `Sidebar` would then
+ * have to subscribe to `documents` — whose identity changes on every keystroke in any open
+ * request — and the whole sidebar would re-render per character, which is the failure the
+ * `collections` memo below already documents. Kept down here, a keystroke re-renders a
+ * `<span>`; and after windowing the number of these subscriptions is priced by the
+ * viewport rather than by the workspace.
+ */
+const RequestMethodChip = memo(function RequestMethodChip({ requestId }: { requestId: string }) {
+  const method = useAppStore(s => s.documents[requestId]?.method)
+  return method ? <MethodChip method={method} variant="chip" /> : null
+})
 
-  const select = () => (node.type === 'request' ? openRequest(node.requestId) : toggleNode(node.id))
+/**
+ * One row of the tree.
+ *
+ * `memo`ised, with `node` and three integers rather than the `VisibleRow` it used to take:
+ * `flattenVisible` mints a fresh row object per node on every tree change, so a `row` prop
+ * could never compare equal. `node` can, now that tree updates copy only the spine.
+ *
+ * Everything else it needs arrives as a prop or through `treeActions`, so the row holds no
+ * store subscription of its own. Five of the six it had were selectors over action
+ * identities that are fixed for the life of the store — listeners that could never fire but
+ * whose selectors zustand ran on every `set()` — and the sixth, `selectedNodeId`, is one
+ * subscription in the hook instead of one per row.
+ */
+const TreeRow = memo(function TreeRow({
+  node,
+  depth,
+  position,
+  siblings,
+  selected,
+  active,
+  renaming,
+  t,
+  onFocusRow,
+  onStartRename,
+  onEditRename,
+  onEndRename,
+}: {
+  node: TreeNode
+  depth: number
+  position: number
+  siblings: number
+  selected: boolean
+  active: boolean
+  renaming: boolean
+  t: Translate
+  onFocusRow: (id: string) => void
+  onStartRename: (id: string) => void
+  onEditRename: (text: string) => void
+  onEndRename: (id: string, name: string) => void
+}) {
+  const select = () => (node.type === 'request' ? treeActions.openRequest(node.requestId) : treeActions.toggleNode(node.id))
 
   return (
     <div
@@ -134,7 +179,7 @@ function TreeRow({ row, active, onFocusRow }: { row: VisibleRow; active: boolean
         ))}
       {node.type === 'collection' && <Boxes size={14} className="tree-icon" aria-hidden="true" />}
       {node.type === 'folder' && <Folder size={14} className="tree-icon" aria-hidden="true" />}
-      {node.type === 'request' && method && <MethodChip method={method} variant="chip" />}
+      {node.type === 'request' && <RequestMethodChip requestId={node.requestId} />}
       {renaming ? (
         /* `autoFocus` is justified here — a single input that appears on demand, on
            desktop, in direct response to choosing Rename. */
@@ -146,16 +191,19 @@ function TreeRow({ row, active, onFocusRow }: { row: VisibleRow; active: boolean
           autoComplete="off"
           spellCheck={false}
           onClick={e => e.stopPropagation()}
+          // Mirrored into the hook on every keystroke — into a ref, so it costs no render.
+          // The row can be unmounted by a scroll, and removing a focused element fires no
+          // blur, so without this the typed name would be lost in silence.
+          onChange={e => onEditRename(e.target.value)}
           onBlur={e => {
-            renameNode(node.id, e.target.value.trim() || node.name)
-            setRenaming(false)
+            onEndRename(node.id, e.target.value.trim())
             onFocusRow(node.id)
           }}
           onKeyDown={e => {
             e.stopPropagation()
             if (e.key === 'Enter') e.currentTarget.blur()
             if (e.key === 'Escape') {
-              setRenaming(false)
+              onEndRename(node.id, '')
               onFocusRow(node.id)
             }
           }}
@@ -166,10 +214,10 @@ function TreeRow({ row, active, onFocusRow }: { row: VisibleRow; active: boolean
       {/* Not while renaming: the group floats over the right edge of the row, so it
           would cover the tail of the input the user is typing into — and it is showing
           exactly then, since the focused input satisfies `:focus-within`. */}
-      {!renaming && <TreeRowActions node={node} onRename={() => setRenaming(true)} onReturnFocus={() => onFocusRow(node.id)} />}
+      {!renaming && <TreeRowActions node={node} t={t} onRename={onStartRename} onReturnFocus={onFocusRow} />}
     </div>
   )
-}
+})
 
 /**
  * The active collection's name, doubling as the tree's accessible name and as the
@@ -181,10 +229,16 @@ function TreeRow({ row, active, onFocusRow }: { row: VisibleRow; active: boolean
  * branch nodes, and the inline rename mirrors what `TreeRow` does. The heading used
  * to hand-roll two of those four buttons beside a menu that repeated them.
  */
+/** Module-level so the memoised actions group sees a stable prop. The heading is not a row. */
+const noReturnFocus = () => undefined
+
+type PadStyle = CSSProperties & Record<'--vrow-pad-top' | '--vrow-pad-bottom', string>
+
 function CollectionHeading({ collection }: { collection: CollectionNode }) {
   const { t } = useT()
   const renameNode = useAppStore(s => s.renameNode)
   const [renaming, setRenaming] = useState(false)
+  const openRename = () => setRenaming(true)
 
   return (
     <div className="sidebar-section-title">
@@ -210,7 +264,7 @@ function CollectionHeading({ collection }: { collection: CollectionNode }) {
           {collection.name}
         </span>
       )}
-      {!renaming && <TreeRowActions node={collection} tabbable onRename={() => setRenaming(true)} onReturnFocus={() => undefined} />}
+      {!renaming && <TreeRowActions node={collection} t={t} tabbable onRename={openRename} onReturnFocus={noReturnFocus} />}
     </div>
   )
 }
@@ -220,13 +274,37 @@ export function Sidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle:
   const addNode = useAppStore(s => s.addNode)
   const tree = useAppStore(s => s.tree)
   const activeCollectionId = useAppStore(s => s.activeCollectionId)
-  const { containerRef, rows, activeId, onKeyDown, focusRow } = useTreeNavigation()
+  const {
+    rows,
+    selectedNodeId,
+    activeId,
+    activeMounted,
+    attachTree,
+    windowStart,
+    windowEnd,
+    padTop,
+    padBottom,
+    onKeyDown,
+    onContainerFocus,
+    onContainerBlur,
+    focusRow,
+    renamingId,
+    startRename,
+    editRename,
+    endRename,
+  } = useTreeNavigation()
 
   // Derived from `tree` rather than selected as `s => collectionsIn(s.tree)`: that
   // selector would build a new array on every store change, and zustand compares
   // with Object.is, so the whole sidebar would re-render on every keystroke.
   const collections = useMemo(() => collectionsIn(tree), [tree])
   const collection = collections.find(c => c.id === activeCollectionId) ?? collections[0]
+
+  // Two custom properties rather than `paddingTop`/`paddingBottom`, so the base 1px and
+  // 8px stay declared once in `components.css` and the placeholder scrollers keep them
+  // through the `0px` fallback. Typed rather than cast: `CSSProperties` has no index
+  // signature for custom properties, and this project does not use `as`.
+  const padStyle: PadStyle = { '--vrow-pad-top': `${padTop}px`, '--vrow-pad-bottom': `${padBottom}px` }
 
   return (
     /* One `<nav>` holding both the rail and the panel, so the landmark, the id and
@@ -280,9 +358,39 @@ export function Sidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle:
               </Placeholder>
             </div>
           ) : (
-            <div className="tree-scroll" ref={containerRef} role="tree" aria-labelledby="collections-label" onKeyDown={onKeyDown}>
-              {rows.map(row => (
-                <TreeRow key={row.node.id} row={row} active={row.node.id === activeId} onFocusRow={focusRow} />
+            <div
+              className="tree-scroll"
+              ref={attachTree}
+              role="tree"
+              aria-labelledby="collections-label"
+              /* The tree is one tab stop, and this only moves it. When the roving row is
+                 outside the rendered window there is no element to carry `tabIndex={0}`,
+                 and without this the whole tree would drop out of the tab order — the
+                 WCAG 2.1.1 regression `useTreeNavigation` exists to prevent. `-1` the rest
+                 of the time keeps the container programmatically focusable, which is what
+                 the parking effect needs, without adding a second stop. */
+              tabIndex={activeMounted ? -1 : 0}
+              onFocus={onContainerFocus}
+              onBlur={onContainerBlur}
+              onKeyDown={onKeyDown}
+              style={padStyle}
+            >
+              {rows.slice(windowStart, windowEnd).map(row => (
+                <TreeRow
+                  key={row.node.id}
+                  node={row.node}
+                  depth={row.depth}
+                  position={row.position}
+                  siblings={row.siblings}
+                  selected={row.node.id === selectedNodeId}
+                  active={row.node.id === activeId}
+                  renaming={row.node.id === renamingId}
+                  t={t}
+                  onFocusRow={focusRow}
+                  onStartRename={startRename}
+                  onEditRename={editRename}
+                  onEndRename={endRename}
+                />
               ))}
             </div>
           )}

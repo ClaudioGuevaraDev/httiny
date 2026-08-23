@@ -1,7 +1,7 @@
-import { useRef, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent } from 'react'
+import { memo, useRef, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent } from 'react'
 import { FilePlus2, FolderPlus, PenLine, Trash2 } from 'lucide-react'
-import { useT } from '../language'
-import { useAppStore } from '../store'
+import type { Translate } from '../i18n'
+import { treeActions } from '../store'
 import type { TreeNode } from '../types'
 
 /**
@@ -22,21 +22,28 @@ import type { TreeNode } from '../types'
  * tree — so they are reached with Shift+F10 or the ContextMenu key, the same entry point
  * the menu had, and then with ← / →. In the panel heading there is no such rule and no
  * such entry point, so there they are ordinary tab stops.
+ *
+ * `memo`ised, and worth it even though `TreeRow` is too: `active` flips on every arrow key
+ * and `selected` on every click, so the row re-renders constantly with `node` and `t`
+ * unchanged. Skipping this subtree is nine `t()` interpolations and four button trees each
+ * time. That is also why `t` arrives as a prop and the two actions come from `treeActions`:
+ * `useT()` plus two store selectors was four external-store subscriptions per row, none of
+ * which could ever produce a different value.
  */
-export function TreeRowActions({
+export const TreeRowActions = memo(function TreeRowActions({
   node,
+  t,
   tabbable = false,
   onRename,
   onReturnFocus,
 }: {
   node: TreeNode
+  t: Translate
   tabbable?: boolean
-  onRename: () => void
-  onReturnFocus: () => void
+  /** Both take the id, so one stable callback serves every row — which is what memo needs. */
+  onRename: (id: string) => void
+  onReturnFocus: (id: string) => void
 }) {
-  const { t } = useT()
-  const addNode = useAppStore(s => s.addNode)
-  const askConfirm = useAppStore(s => s.askConfirm)
   const groupRef = useRef<HTMLDivElement>(null)
 
   const onKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
@@ -48,7 +55,7 @@ export function TreeRowActions({
     event.preventDefault()
 
     if (event.key === 'Escape') {
-      onReturnFocus()
+      onReturnFocus(node.id)
       return
     }
     const buttons = [...(groupRef.current?.querySelectorAll<HTMLElement>('button') ?? [])]
@@ -61,7 +68,7 @@ export function TreeRowActions({
   // pressing one of its buttons means.
   const run = (action: () => void) => (event: ReactMouseEvent) => {
     event.stopPropagation()
-    onReturnFocus()
+    onReturnFocus(node.id)
     action()
   }
 
@@ -77,7 +84,7 @@ export function TreeRowActions({
             tabIndex={tabbable ? undefined : -1}
             aria-label={t('tree.newRequestIn.aria', { name: node.name })}
             title={t('tree.newRequestIn.title', { name: node.name })}
-            onClick={run(() => addNode('request', node.id))}
+            onClick={run(() => treeActions.addNode('request', node.id))}
           >
             <FilePlus2 size={13} aria-hidden="true" />
           </button>
@@ -87,7 +94,7 @@ export function TreeRowActions({
             tabIndex={tabbable ? undefined : -1}
             aria-label={t('tree.newFolderIn.aria', { name: node.name })}
             title={t('tree.newFolderIn.title', { name: node.name })}
-            onClick={run(() => addNode('folder', node.id))}
+            onClick={run(() => treeActions.addNode('folder', node.id))}
           >
             <FolderPlus size={13} aria-hidden="true" />
           </button>
@@ -104,7 +111,7 @@ export function TreeRowActions({
         title={t('tree.rename.title', { name: node.name })}
         onClick={event => {
           event.stopPropagation()
-          onRename()
+          onRename(node.id)
         }}
       >
         <PenLine size={13} aria-hidden="true" />
@@ -115,10 +122,10 @@ export function TreeRowActions({
         tabIndex={tabbable ? undefined : -1}
         aria-label={t('tree.delete.aria', { name: node.name })}
         title={t('tree.delete.title', { name: node.name })}
-        onClick={run(() => askConfirm({ kind: 'deleteNode', nodeId: node.id }))}
+        onClick={run(() => treeActions.askConfirm({ kind: 'deleteNode', nodeId: node.id }))}
       >
         <Trash2 size={13} aria-hidden="true" />
       </button>
     </div>
   )
-}
+})

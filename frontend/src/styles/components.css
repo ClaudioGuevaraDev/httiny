@@ -600,12 +600,45 @@
     flex: 1;
     overflow: auto;
     overscroll-behavior: contain;
-    padding: 1px 5px 8px;
+
+    /* The tree is windowed: only the rows in view are in the DOM, and the scroll extent
+     * of the ones that are not comes from the two `--vrow-pad-*`, which `Sidebar` sets
+     * inline. Custom properties rather than an inline `paddingTop`/`paddingBottom` so the
+     * 1px and the 8px stay declared once, here — and so the two placeholder scrollers
+     * below, which never receive the inline style, keep them through the `0px` fallback
+     * without knowing the virtualiser exists.
+     *
+     * A scroll container's own end-side padding counts toward its scrollable overflow in
+     * CSS Overflow 3, and both engines this ships on implement it. The famous
+     * padding-bottom-ignored bug is Gecko's, and no Wails webview is Gecko: WebView2,
+     * WKWebView, WebKitGTK. `clientHeight` is unaffected either way, which is what keeps
+     * it the right scrollport height to compare against `scrollTop`. */
+    padding: calc(1px + var(--vrow-pad-top, 0px)) 5px calc(8px + var(--vrow-pad-bottom, 0px));
+
+    /* Scroll anchoring picks a node in the scroller and silently corrects `scrollTop` when
+     * content above it changes height — which is the exact shape of swapping the rendered
+     * slice and the top padding on one frame. Left on, Chromium adds its own correction on
+     * top of ours and the tree fights the wheel. Blink-only; WebKit never implemented it. */
+    overflow-anchor: none;
+
+    /* Makes this the `offsetParent` of the rows, so `row.offsetTop` is measured from the
+     * scroller's padding edge and is directly comparable to `scrollTop`. Without it the
+     * rows resolve against whatever positioned ancestor happens to sit above the sidebar
+     * and the pitch measurement is meaningless. No visual effect: `.tree-actions` and
+     * `.tree-row.selected::before` both position against `.tree-row`, which is already
+     * `position: relative`. */
+    position: relative;
   }
 
   /* The empty-state placeholder centres itself in whatever the tree would have filled.
    * `.placeholder` is `flex: 1`, which does nothing to a block-level child, so it needs
-   * an explicit height to have something to centre against. */
+   * an explicit height to have something to centre against.
+   *
+   * Untouched by the windowing padding above, three times over: the empty states render a
+   * *different* `.tree-scroll` element that never gets the inline style, the fallback is
+   * `0px`, and `height: 100%` resolves against the content box under the global
+   * `border-box` anyway. Do not "simplify" that `calc()` into a plain `padding` — the
+   * fallback is what makes all three true. */
   .tree-scroll > .placeholder {
     height: 100%;
     padding: 16px;
