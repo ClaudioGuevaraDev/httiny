@@ -28,6 +28,24 @@
      * place proportional numerals would read better is prose, which there is
      * almost none of. */
     font-variant-numeric: tabular-nums;
+    /* Global for the same reason, and JetBrains Mono is why: it is a coding font and
+     * ships its programming ligatures on. `://` is one of them, drawn as a single
+     * merged glyph where the two slashes collapse into what reads as one — `https://r`
+     * painted as `https:/r` while the value still holds both characters, which copying
+     * the field proves. Every mono surface in this app shows text that is worth exactly
+     * its own bytes — URLs, headers, tokens, a JSON body, a generated `curl` — so `->`,
+     * `=>`, `!=` and `--` are the same defect on the other surfaces, and a ligature is
+     * never what any of them wants.
+     *
+     * `none` rather than `no-contextual`, which would spare the sans face its `fi`/`fl`:
+     * these ligatures are `calt`, but not provably so from this Google Fonts-derived
+     * build, and `none` covers `liga`, `dlig` and `hlig` along with it. Common ligatures
+     * at 13px are the cheaper thing to give up than a wrong URL.
+     *
+     * It reaches the form controls because the `font: inherit` below is a whole-shorthand
+     * `inherit`, and so inherits the `font-variant-*` longhands instead of resetting them
+     * — the route `tabular-nums` already takes. */
+    font-variant-ligatures: none;
     -webkit-font-smoothing: antialiased;
     /* WebKitGTK and the macOS WKWebView both paint a tap flash on touch. The focus ring
      * and the `:active` surface already carry that feedback, and the flash is a colour
