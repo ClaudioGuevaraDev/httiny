@@ -293,7 +293,6 @@ interface AppState {
   setSaveState: (state: AppState['saveState']) => void
   setSecretsAvailable: (available: boolean) => void
   updateDocument: (id: string, patch: Partial<RequestDocument>) => void
-  setRows: (id: string, key: 'params' | 'headers', rows: KeyValueRow[]) => void
   setBody: (id: string, patch: Partial<RequestDocument['body']>) => void
   toggleNode: (nodeId: string) => void
   addNode: (type: 'collection' | 'folder' | 'request', parentId?: string, name?: string) => void
@@ -785,8 +784,6 @@ export const useAppStore = create<AppState>((set, get) => ({
   // state the app could no longer be in — and a confirmation dialog guarding
   // against losing changes that were already on disk was simply lying.
   updateDocument: (id, patch) => set(s => ({ documents: { ...s.documents, [id]: { ...s.documents[id], ...patch } } })),
-
-  setRows: (id, key, rows) => set(s => ({ documents: { ...s.documents, [id]: { ...s.documents[id], [key]: rows } } })),
 
   // A body is now four payload fields under one `type`, so the merge that used to sit
   // loose inside the editor is an action. `updateDocument(id, { body: { ...body, ...patch } })`

@@ -2,7 +2,7 @@ import { Service as WorkspaceService } from '../bindings/github.com/ClaudioGueva
 import type { Secret } from '../bindings/github.com/ClaudioGuevaraDev/httiny/internal/workspace/models'
 import { collectionsIn, revealPatch, useAppStore } from './store'
 import type { RequestDocument, TreeNode } from './types'
-import type { WorkspaceState } from './workspaceFile'
+import type { PrefsSource, WorkspaceState } from './workspaceFile'
 import type { LoadedWorkspace, PreparedImport } from './workspaceFile'
 import {
   PREFS_VERSION,
@@ -34,19 +34,51 @@ const PREFS_DEBOUNCE_MS = 400
 // A hung IPC should degrade to an in-memory session, not an app that never paints.
 const HYDRATE_TIMEOUT_MS = 2000
 
-type Writer = { schedule: (payload: string) => void; flush: () => void }
+type Writer = {
+  /**
+   * Queues a write. Takes a **thunk**, not a payload: the debounce exists because
+   * writing on every keystroke is too much, and serialising on every keystroke was too
+   * much for exactly the same reason. `build` runs once, in `run()`, so a forty-character
+   * burst pays one whole-workspace `JSON.stringify` instead of forty.
+   */
+  schedule: (build: () => string) => void
+  flush: () => void
+  /** Seeds the "already on disk" payload at hydration, so the first edit is not a rewrite. */
+  seed: (payload: string) => void
+}
 
 function createWriter(write: (payload: string) => Promise<void>, debounceMs: number, maxWaitMs: number): Writer {
   let timer: number | undefined
   let firstDirtyAt = 0
-  let pending: string | null = null
+  let pending: (() => string) | null = null
+  /**
+   * The last payload this writer put on disk, compared against before every write.
+   *
+   * Held here rather than beside the subscriber because the comparison has to happen
+   * where the serialisation does. It is what keeps `toggleNode` from rewriting
+   * `workspace.json` — it rebuilds `tree`, but only changes `expanded`, which is a prefs
+   * field — and what makes edit-then-undo a no-op.
+   */
+  let lastWritten = ''
+  /** Whether anything has ever been written, so the no-op path can settle honestly. */
+  let written = false
 
   const run = () => {
     timer = undefined
     firstDirtyAt = 0
-    const payload = pending
-    if (payload === null) return
+    const build = pending
+    if (build === null) return
     pending = null
+    const payload = build()
+    if (payload === lastWritten) {
+      // Nothing to write, but `schedule` already announced 'pending'. Settling it here is
+      // what stops the footer sitting on "Saving…" forever after a change that serialised
+      // to the same bytes — a locked variable's value, or an edit and its undo.
+      useAppStore.getState().setSaveState(written ? 'saved' : 'idle')
+      return
+    }
+    lastWritten = payload
+    written = true
     useAppStore.getState().setSaveState('saving')
     write(payload).then(
       () => useAppStore.getState().setSaveState('saved'),
@@ -58,8 +90,8 @@ function createWriter(write: (payload: string) => Promise<void>, debounceMs: num
   }
 
   return {
-    schedule(payload) {
-      pending = payload
+    schedule(build) {
+      pending = build
       const now = Date.now()
       if (!firstDirtyAt) firstDirtyAt = now
       if (timer !== undefined) clearTimeout(timer)
@@ -70,6 +102,9 @@ function createWriter(write: (payload: string) => Promise<void>, debounceMs: num
     flush() {
       if (timer !== undefined) clearTimeout(timer)
       run()
+    },
+    seed(payload) {
+      lastWritten = payload
     },
   }
 }
@@ -177,6 +212,52 @@ const secretsSignature = (documents: Record<string, RequestDocument>, tree: Tree
   JSON.stringify([secretsOf(documents), environmentSecretsOf(tree), secretKeysOf(documents, tree).sort()])
 
 /**
+ * Whether a transition can possibly have moved a credential, in pointer comparisons.
+ *
+ * Exact rather than heuristic, and that is what makes it safe to put in front of
+ * `secretsSignature`: the three functions behind that signature read exactly four things —
+ * the key set of `documents`, each document's `auth` object, the ids of the root
+ * collections, and each collection's `environments` array. If none of those moved, all
+ * three return the same values and the signature cannot differ. The converse is not
+ * claimed; an identity that changed without its content changing simply falls through to
+ * the signature, which still returns early on equality.
+ *
+ * It exists because the signature was three full traversals, a sort and a `JSON.stringify`
+ * on **every** `documents` or `tree` change — so every keystroke in a URL, a body or a
+ * header paid for it before being rejected. Its own doc comment said as much about a
+ * folder expand.
+ */
+const authShapeUnchanged = (next: Record<string, RequestDocument>, prev: Record<string, RequestDocument>): boolean => {
+  if (next === prev) return true
+  const keys = Object.keys(next)
+  if (keys.length !== Object.keys(prev).length) return false
+  return keys.every(key => prev[key] !== undefined && prev[key].auth === next[key].auth)
+}
+
+/**
+ * The `environments` **array** and not the collection node, deliberately.
+ *
+ * `setActiveEnvironment` mints a new collection object around the same array, and the
+ * pick is not a credential — comparing the node would send every environment switch to
+ * the full signature for nothing.
+ *
+ * Order-sensitive across the root collections, which is safe in the direction it can
+ * fail: nothing reorders roots today, and a reorder that preserved every id and every
+ * array would have changed no credential anyway, so the worst case is a false *negative*
+ * that falls through to the signature. A future move or reorder feature must not "fix"
+ * this into the other direction.
+ */
+const environmentShapeUnchanged = (next: TreeNode[], prev: TreeNode[]): boolean => {
+  if (next === prev) return true
+  const a = collectionsIn(next)
+  const b = collectionsIn(prev)
+  return a.length === b.length && a.every((collection, i) => collection.id === b[i].id && collection.environments === b[i].environments)
+}
+
+const credentialsUnchanged = (state: WorkspaceState, prev: WorkspaceState): boolean =>
+  authShapeUnchanged(state.documents, prev.documents) && environmentShapeUnchanged(state.tree, prev.tree)
+
+/**
  * The write itself, split out so `flushSecrets` can run it without waiting.
  *
  * Holds the arguments of the pending write rather than reading the store, because the
@@ -239,46 +320,85 @@ const workspaceKeysAreComplete: [Exclude<keyof WorkspaceState, (typeof WORKSPACE
 void workspaceKeysAreComplete
 
 /**
+ * The same pre-filter for `ui.json`, and it was missing.
+ *
+ * `toPrefsFile` used to run on *every* store transition — including the three
+ * `setSaveState` calls each save cycle re-enters this subscriber with, every response
+ * tick, every panel switch and every keystroke — and it calls `collapsedIn`, which walks
+ * the whole tree. None of those can change a preference.
+ *
+ * `tree` is a member for the reason `PrefsSource` includes it: `collapsedNodeIds` is
+ * derived from it, so leaving it out would silently stop persisting folder expansion —
+ * and the completeness assertion below could not catch that, because it only checks the
+ * list against `PrefsSource`.
+ */
+const PREFS_KEYS = [
+  'tree',
+  'tabs',
+  'activeId',
+  'selectedNodeId',
+  'activeCollectionId',
+  'recentIds',
+  'sidebarWidth',
+  'sidebarCollapsed',
+  'splitOrientation',
+  'splitRatio',
+  'theme',
+  'language',
+  'zoom',
+  'codeFontSize',
+  'defaultBodyLanguage',
+  'defaultRedactSecrets',
+] as const satisfies readonly (keyof PrefsSource)[]
+const prefsKeysAreComplete: [Exclude<keyof PrefsSource, (typeof PREFS_KEYS)[number]>] extends [never] ? true : never = true
+void prefsKeysAreComplete
+
+/**
  * Installs the autosave subscriber. Called only on the success path of `hydrate`,
  * which is what stops a failed or slow load from writing an empty workspace over a
  * real one.
  */
 function installAutosave(): void {
-  let lastWorkspace = JSON.stringify(toWorkspaceFile(useAppStore.getState()))
-  let lastPrefs = JSON.stringify(toPrefsFile(useAppStore.getState()))
+  // One read, not six: `getState()` is cheap but the four serialisations below are not,
+  // and asking repeatedly invited someone to ask a seventh time in a later edit.
+  const initial = useAppStore.getState()
+  workspaceWriter.seed(JSON.stringify(toWorkspaceFile(initial)))
+  prefsWriter.seed(JSON.stringify(toPrefsFile(initial)))
   // Seeded from the just-hydrated state, so the first edit to anything else does
   // not look like a credential change and rewrite the keychain for nothing.
-  lastSecrets = secretsSignature(useAppStore.getState().documents, useAppStore.getState().tree)
-  lastKeep = secretKeysOf(useAppStore.getState().documents, useAppStore.getState().tree)
+  lastKeep = secretKeysOf(initial.documents, initial.tree)
+  lastSecrets = secretsSignature(initial.documents, initial.tree)
 
   useAppStore.subscribe((state, prev) => {
     if (WORKSPACE_KEYS.some(key => state[key] !== prev[key])) {
-      const next = JSON.stringify(toWorkspaceFile(state))
-      // Serialise and compare rather than trusting reference inequality:
-      // `toggleNode` rebuilds `tree` but only changes `expanded`, which is a prefs
-      // field, so expanding a folder must not rewrite the file holding your
-      // collections. It also makes edit-then-undo a no-op.
-      if (next !== lastWorkspace) {
-        lastWorkspace = next
-        workspaceWriter.schedule(next)
-      }
+      // Destructured rather than closing over `state`: the thunk is held for up to the
+      // debounce ceiling, and a whole state snapshot would pin `responses` — every
+      // response body in it — alive for that long.
+      const { tree, documents } = state
+      workspaceWriter.schedule(() => JSON.stringify(toWorkspaceFile({ tree, documents })))
       // `tree` as well as `documents`, because a locked variable's value lives on a
       // collection node. It is inside the `WORKSPACE_KEYS` branch, so a prefs-only change
-      // never reaches it.
-      if (state.documents !== prev.documents || state.tree !== prev.tree) scheduleSecrets(state.documents, state.tree)
+      // never reaches it, and behind `credentialsUnchanged` so an ordinary keystroke does
+      // not pay for the signature before being rejected by it.
+      if (!credentialsUnchanged(state, prev)) scheduleSecrets(documents, tree)
     }
 
-    const nextPrefs = JSON.stringify(toPrefsFile(state))
-    if (nextPrefs !== lastPrefs) {
-      lastPrefs = nextPrefs
-      prefsWriter.schedule(nextPrefs)
-    }
+    // A sibling `if` and not nested inside the one above: a prefs-only change — a split
+    // drag, a zoom step, a tab activated — still has to be written.
+    //
+    // This thunk does close over the whole `state`, unlike the one above, because
+    // `toPrefsFile` reads sixteen fields and destructuring them here would be a second
+    // copy of `PREFS_KEYS` to keep in sync. The retention it costs is bounded by the
+    // 400 ms debounce and by one superseded snapshot, which is a different order of
+    // problem from pinning every response body for the workspace writer's two seconds.
+    if (PREFS_KEYS.some(key => state[key] !== prev[key])) prefsWriter.schedule(() => JSON.stringify(toPrefsFile(state)))
   })
 
   // `run()` calls setSaveState, which re-enters this subscriber. That is safe only
-  // because `saveState` is not part of either DTO, so both comparisons come back
-  // equal and nothing is scheduled. Adding it to `toPrefsFile` would turn this into
-  // an infinite write loop.
+  // because `saveState` is in neither key list, so both guards fail on their first
+  // pointer comparison and nothing is scheduled. The same contract carries `dataDir`,
+  // which lands in a `setState` of its own after hydration. Adding either to
+  // `toPrefsFile` — and so to `PREFS_KEYS` — would turn this into an infinite write loop.
 }
 
 /** Writes everything pending immediately. Wired to Ctrl+S and to window teardown. */

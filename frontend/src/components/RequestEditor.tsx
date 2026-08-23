@@ -59,17 +59,19 @@ const PANEL_COUNT = { params: 'editor.panel.paramsEnabled', headers: 'editor.pan
  * difference lives.
  */
 function RequestRows({ request, field }: { request: RequestDocument; field: 'params' | 'headers' }) {
-  const setRows = useAppStore(s => s.setRows)
   const updateDocument = useAppStore(s => s.updateDocument)
   return (
     <KeyValueGrid
       rows={request[field]}
       name={field}
       addLabel={field === 'params' ? 'editor.kv.addParam' : 'editor.kv.addHeader'}
-      onChange={next => {
-        setRows(request.id, field, next)
-        if (field === 'params') updateDocument(request.id, { url: replaceQuery(request.url, next) })
-      }}
+      // One patch and therefore one `set()`, where this was two. Both halves already read
+      // the pre-update document out of the render closure, so folding them changes
+      // nothing about what is written — but every `set()` is a full pass over every store
+      // listener *and* a full run of the autosave subscriber, and this fires per keystroke.
+      onChange={next =>
+        updateDocument(request.id, field === 'params' ? { params: next, url: replaceQuery(request.url, next) } : { headers: next })
+      }
     />
   )
 }
@@ -308,10 +310,12 @@ export function RequestEditor() {
           // direction (editing a row rewrites the URL through `replaceQuery`)
           // updates the store programmatically, and `TemplateInput` annotates that
           // dispatch so it never comes back through here.
-          onChange={url => {
-            updateDocument(activeId, { url })
-            useAppStore.getState().setRows(activeId, 'params', parseParams(url, request.params))
-          }}
+          //
+          // Both fields in one patch, so a character typed here is one `set()` rather than
+          // two. It used to be an `updateDocument` followed by a `setRows`, which meant
+          // every listener in the app ran twice and the autosave subscriber serialised the
+          // whole workspace twice, for one keystroke.
+          onChange={url => updateDocument(activeId, { url, params: parseParams(url, request.params) })}
           // Enter sends, the way it does in a browser's address bar and in every other
           // client. Ctrl+Enter is the global one and works from anywhere; this is the one
           // that is in the finger memory of whoever just finished typing a URL. An open

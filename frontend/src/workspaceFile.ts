@@ -216,6 +216,17 @@ export interface PrefsFile {
 export type PrefsState = Omit<PrefsFile, 'collapsedNodeIds'>
 
 /**
+ * What `toPrefsFile` reads: `PrefsState`, plus the tree `collapsedNodeIds` is derived from.
+ *
+ * Named for the reason `WorkspaceState` is. `persistence.ts` keys its autosave pre-filter
+ * off `keyof PrefsSource`, so this type is what makes "a preference added and forgotten in
+ * that list" a compile error rather than a preference that saves once and then never
+ * again. `tree` has to be a member for that check to cover it — it is not a preference,
+ * but it is an input, and a change to it is the only thing that can move `collapsedNodeIds`.
+ */
+export type PrefsSource = PrefsState & { tree: TreeNode[] }
+
+/**
  * An import that has been read, repaired and had its credentials resolved, ready to be
  * committed to the store in one `setState`.
  *
@@ -301,24 +312,7 @@ export const toWorkspaceFile = (state: WorkspaceState): WorkspaceFile => ({
   documents: Object.fromEntries(Object.entries(state.documents).map(([id, doc]) => [id, toStoredDocument(doc)])),
 })
 
-export const toPrefsFile = (state: {
-  tree: TreeNode[]
-  tabs: string[]
-  activeId: string | null
-  selectedNodeId: string | null
-  activeCollectionId: string | null
-  recentIds: string[]
-  sidebarWidth: number
-  sidebarCollapsed: boolean
-  splitOrientation: SplitOrientation
-  splitRatio: number
-  theme: ThemePreference
-  language: Locale
-  zoom: number
-  codeFontSize: number
-  defaultBodyLanguage: BodyLanguage | null
-  defaultRedactSecrets: boolean
-}): PrefsFile => ({
+export const toPrefsFile = (state: PrefsSource): PrefsFile => ({
   tabs: state.tabs,
   activeId: state.activeId,
   selectedNodeId: state.selectedNodeId,
