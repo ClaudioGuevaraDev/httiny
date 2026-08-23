@@ -97,7 +97,8 @@ export async function saveResponseBody(request: SaveBodyRequest): Promise<{ ok: 
  * that a closed tab keeps its response — finding it still there when you reopen the
  * tab is a feature — and releasing the bytes would leave that reopened tab showing a
  * broken image beside an intact status line. Only a response that has genuinely been
- * discarded is released here; the store's 64 MiB ceiling handles everything else.
+ * discarded is released here — including one the store evicts, which reaches this the
+ * same way any other discard does. `RESPONSE_BUDGET_CHARS` is what bounds the rest.
  *
  * Installed from `main.tsx` rather than on import, so the module stays side-effect
  * free and the subscription's lifetime is visible where the rest of the boot is.

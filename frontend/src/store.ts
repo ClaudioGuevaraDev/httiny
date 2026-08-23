@@ -544,6 +544,60 @@ export const flattenVisible = (nodes: TreeNode[], depth = 0, parentId: string | 
     return node.type !== 'request' && node.expanded ? [row, ...flattenVisible(node.children, depth + 1, node.id)] : [row]
   })
 
+/**
+ * Response body characters held in memory at once.
+ *
+ * `requestRunner`'s `installBodyRelease` has always said "the store's 64 MiB ceiling
+ * handles everything else". There was no such ceiling: `responses` kept every body string
+ * for the life of the session, pruned only by deleting the request or replacing the
+ * workspace — deliberately *not* by closing a tab, because finding your last response
+ * still there when you reopen one is a feature. This is that ceiling, finally written.
+ *
+ * Characters and not bytes, because a JS string is UTF-16 and characters are the honest
+ * measure of what the map costs: 24M of them is ~48 MB of heap. Sized against Go's own
+ * `maxTextBytes` (5 MiB, `internal/httpexec/service.go`) so that four or five maximal
+ * bodies survive together — the cap is for the session that has run two hundred requests,
+ * not for the one that has run three.
+ */
+const RESPONSE_BUDGET_CHARS = 24 << 20
+
+/**
+ * Evicts the least recently received bodies until the map is inside the budget.
+ *
+ * Returns its input untouched when nothing has to go, so the ordinary case allocates
+ * nothing and `responses` keeps its identity.
+ *
+ * Only `success` entries are candidates. A `loading` one carries no body and is in flight
+ * by definition, so this never has to consult `requestRunner`'s controller registry — and
+ * could not, since the dependency runs the other way. `protect` covers the active request
+ * and the one just written.
+ *
+ * The loop stops when there is nothing left to evict rather than when it is under budget:
+ * a single body cannot exceed Go's text cap today, but a future raise there must not turn
+ * this into an infinite loop.
+ *
+ * Eviction is also what releases the Go-side bytes, for free: an evicted id looks to
+ * `installBodyRelease` exactly like any other discarded response, which is its release
+ * path.
+ */
+const withinBudget = (responses: Record<string, ResponseSnapshot>, protect: readonly (string | null)[]): Record<string, ResponseSnapshot> => {
+  let held = 0
+  for (const response of Object.values(responses)) if (response.state === 'success') held += response.body.length
+  if (held <= RESPONSE_BUDGET_CHARS) return responses
+
+  const evictable = Object.entries(responses)
+    .filter((entry): entry is [string, Extract<ResponseSnapshot, { state: 'success' }>] => entry[1].state === 'success' && !protect.includes(entry[0]))
+    .sort((a, b) => a[1].receivedAt - b[1].receivedAt)
+
+  const next = { ...responses }
+  for (const [id, response] of evictable) {
+    if (held <= RESPONSE_BUDGET_CHARS) break
+    held -= response.body.length
+    delete next[id]
+  }
+  return next
+}
+
 const remember = (recentIds: string[], id: string): string[] => [id, ...recentIds.filter(recent => recent !== id)].slice(0, 12)
 
 /**
@@ -801,7 +855,9 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   // Closing a tab is a view operation, not a delete: the request still exists in the
   // tree, so `documents[id]` stays. The stored response stays too — finding your last
-  // response still there when you reopen a tab is a feature, not a leak.
+  // response still there when you reopen a tab is a feature, not a leak. It is the first
+  // thing `withinBudget` gives up once the bodies held in memory pass the ceiling, which
+  // is the one qualification on that promise.
   closeRequest: id =>
     set(s => {
       const tabs = s.tabs.filter(tab => tab !== id)
@@ -1049,7 +1105,7 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   setRequestPanel: (id, panel) => set(s => ({ requestPanels: { ...s.requestPanels, [id]: panel } })),
   setResponsePanel: (id, panel) => set(s => ({ responsePanels: { ...s.responsePanels, [id]: panel } })),
-  setResponse: (id, response) => set(s => ({ responses: { ...s.responses, [id]: response } })),
+  setResponse: (id, response) => set(s => ({ responses: withinBudget({ ...s.responses, [id]: response }, [s.activeId, id]) })),
   // Merged over the default rather than over the stored entry alone, so setting one
   // field on a request that has never been touched still yields a whole `BodyView`.
   setBodyView: (id, patch) => set(s => ({ bodyViews: { ...s.bodyViews, [id]: { ...DEFAULT_BODY_VIEW, ...s.bodyViews[id], ...patch } } })),
