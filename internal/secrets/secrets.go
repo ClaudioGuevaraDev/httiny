@@ -13,6 +13,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sync/atomic"
 
 	"github.com/zalando/go-keyring"
 )
@@ -43,15 +44,36 @@ type Entry struct {
 // should delete any existing entry rather than write a blank one.
 func (e Entry) Empty() bool { return e.Token == "" && e.Password == "" }
 
+// reachable latches a successful probe. See Available.
+var reachable atomic.Bool
+
 // Available reports whether a credential store can be reached.
 //
 // This is not a given: on Linux go-keyring talks to the D-Bus Secret Service, and a
 // headless box or a desktop without gnome-keyring/KWallet simply has none. Callers
 // are expected to degrade — keep secrets in memory for the session — rather than
 // fail the whole workspace load.
+//
+// The probe is a full credential-store read, and it is paid on every LoadSecrets *and*
+// every SaveSecrets. On macOS that is a fork of /usr/bin/security before any work
+// happens, so a debounced credential write cost an extra process every time. A store
+// that has answered once does not go away for the life of the process, so a positive
+// answer is latched.
+//
+// The negative deliberately is not. A Linux session whose keyring is unlocked after
+// launch has to be able to start persisting credentials, and the sidebar footer's
+// "session-only" warning has to be able to go away again — a sync.Once would freeze it
+// on for the session, which is the one behaviour this must not change.
 func Available() bool {
+	if reachable.Load() {
+		return true
+	}
 	_, err := keyring.Get(service, probeKey)
-	return err == nil || errors.Is(err, keyring.ErrNotFound)
+	if err == nil || errors.Is(err, keyring.ErrNotFound) {
+		reachable.Store(true)
+		return true
+	}
+	return false
 }
 
 // Set stores one request's credentials, or removes them when the entry is empty so

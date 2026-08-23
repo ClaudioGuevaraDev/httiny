@@ -14,6 +14,7 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/ClaudioGuevaraDev/httiny/internal/secrets"
@@ -119,24 +120,91 @@ func (s *Service) SavePrefs(_ context.Context, payload string, version int) erro
 	return s.save(prefsFile, payload, version)
 }
 
+// secretWorkers bounds the fan-out of the two credential loops below.
+//
+// One credential-store read is 50-300us on Windows (a single CredReadW), but on macOS
+// go-keyring forks /usr/bin/security per credential at 15-40ms each, and on Linux it
+// opens a fresh D-Bus connection and makes five round trips. A workspace where a hundred
+// requests carry a bearer token therefore cost between fifteen milliseconds and four
+// seconds of blocked first paint depending on the platform. Eight is enough to hide that
+// without opening a hundred D-Bus connections at once.
+//
+// Concurrency is safe on all three: the Windows backend is a bare syscall, the macOS one
+// an exec, and the Linux one builds its own connection inside every call, so no two
+// goroutines share anything.
+const secretWorkers = 8
+
+// eachIndex runs fn over 0..n on a bounded pool, in no particular order. Callers write
+// their results into a slice indexed by position and read it only after this returns, so
+// they can reassemble in the order they asked for and error semantics do not depend on
+// scheduling.
+func eachIndex(n int, fn func(index int)) {
+	workers := secretWorkers
+	if n < workers {
+		workers = n
+	}
+	var next atomic.Int64
+	var wg sync.WaitGroup
+	for i := 0; i < workers; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for {
+				at := int(next.Add(1)) - 1
+				if at >= n {
+					return
+				}
+				fn(at)
+			}
+		}()
+	}
+	wg.Wait()
+}
+
+// lastError reports the last non-nil error in index order, which is the answer a
+// sequential loop assigning to one variable would have given.
+func lastError(errs []error) string {
+	out := ""
+	for _, err := range errs {
+		if err != nil {
+			out = err.Error()
+		}
+	}
+	return out
+}
+
 // LoadSecrets fetches credentials for the given request ids in one call rather than
 // one round trip each, which matters because this sits on the startup path.
+//
+// The reads run concurrently but are assembled in the caller's order, and the last error
+// in that order still wins — the same answer the sequential loop gave, so nothing
+// downstream can tell the difference.
 func (s *Service) LoadSecrets(_ context.Context, ids []string) SecretsResult {
 	if !secrets.Available() {
 		return SecretsResult{Error: "no credential store is available on this system"}
 	}
+	type slot struct {
+		entry secrets.Entry
+		err   error
+	}
+	// Each slot is written by exactly one goroutine and read only after eachSecret
+	// returns, so there is nothing to synchronise beyond the WaitGroup inside it.
+	slots := make([]slot, len(ids))
+	eachIndex(len(ids), func(index int) {
+		slots[index].entry, slots[index].err = secrets.Get(ids[index])
+	})
+
 	out := SecretsResult{Available: true, Secrets: make([]Secret, 0, len(ids))}
-	for _, id := range ids {
-		entry, err := secrets.Get(id)
-		if err != nil {
+	for i, got := range slots {
+		if got.err != nil {
 			// One unreadable entry must not cost the others.
-			out.Error = err.Error()
+			out.Error = got.err.Error()
 			continue
 		}
-		if entry.Empty() {
+		if got.entry.Empty() {
 			continue
 		}
-		out.Secrets = append(out.Secrets, Secret{ID: id, Token: entry.Token, Password: entry.Password})
+		out.Secrets = append(out.Secrets, Secret{ID: ids[i], Token: got.entry.Token, Password: got.entry.Password})
 	}
 	return out
 }
@@ -150,20 +218,35 @@ func (s *Service) SaveSecrets(_ context.Context, entries []Secret, keep []string
 	}
 	out := SecretsResult{Available: true}
 
+	// Built before anything is written, because the sweep below reads it: the two passes
+	// were sequential loops and this keeps them ordered against each other even though
+	// each is now concurrent within itself.
 	written := make(map[string]bool, len(entries))
 	for _, entry := range entries {
 		written[entry.ID] = true
-		if err := secrets.Set(entry.ID, secrets.Entry{Token: entry.Token, Password: entry.Password}); err != nil {
-			out.Error = err.Error()
-		}
 	}
-	for _, id := range keep {
-		if written[id] {
-			continue
+
+	writeErrs := make([]error, len(entries))
+	eachIndex(len(entries), func(index int) {
+		entry := entries[index]
+		writeErrs[index] = secrets.Set(entry.ID, secrets.Entry{Token: entry.Token, Password: entry.Password})
+	})
+
+	sweepErrs := make([]error, len(keep))
+	eachIndex(len(keep), func(index int) {
+		if written[keep[index]] {
+			return
 		}
-		if err := secrets.Delete(id); err != nil {
-			out.Error = err.Error()
-		}
+		sweepErrs[index] = secrets.Delete(keep[index])
+	})
+
+	// The sweep runs second and so wins ties, which is the order the two sequential loops
+	// assigned in.
+	if message := lastError(writeErrs); message != "" {
+		out.Error = message
+	}
+	if message := lastError(sweepErrs); message != "" {
+		out.Error = message
 	}
 	return out
 }

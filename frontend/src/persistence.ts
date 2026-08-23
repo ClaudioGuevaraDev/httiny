@@ -408,6 +408,25 @@ export function flushNow(): void {
   flushSecrets()
 }
 
+/**
+ * Fetches the data directory and drops it into the store when it arrives.
+ *
+ * Deliberately not awaited, and deliberately not part of the hydration `setState`: it was
+ * a fourth serial IPC round trip on the path that blocks the first paint, for a string
+ * that only ever appears in the sidebar footer's tooltip and in Settings.
+ *
+ * The `setState` it lands in re-enters the autosave subscriber, which is safe for the same
+ * reason `setSaveState` is: `dataDir` is in neither DTO and in neither key list, so both
+ * guards fail on their first pointer comparison. Adding it to `toPrefsFile` would make
+ * this an infinite write loop.
+ */
+function loadDataDir(): void {
+  void WorkspaceService.DataDir().then(
+    dataDir => useAppStore.setState({ dataDir }),
+    (error: unknown) => console.warn('[persistence] could not read the data directory:', error),
+  )
+}
+
 const withTimeout = <T,>(promise: Promise<T>, ms: number): Promise<T> =>
   Promise.race([promise, new Promise<T>((_, reject) => setTimeout(() => reject(new Error('timed out')), ms))])
 
@@ -505,14 +524,17 @@ export async function hydrate(): Promise<void> {
       // A file from a newer build. Parsing what we understand and writing the
       // result back would silently truncate the user's data, so do neither: report
       // it and leave autosave uninstalled.
-      useAppStore.setState({ persistenceState: 'newer-version', dataDir: await WorkspaceService.DataDir() })
+      useAppStore.setState({ persistenceState: 'newer-version' })
+      loadDataDir()
       return
     }
 
-    const collapsed = prefs.found ? readCollapsed(JSON.parse(prefs.payload)) : []
+    // Parsed once. This was three `JSON.parse` calls over the same string, two of them
+    // for `prefs`, on the path that blocks the first paint.
+    const savedPrefs: unknown = prefs.found ? JSON.parse(prefs.payload) : {}
     const savedWorkspace: unknown = workspace.found ? JSON.parse(workspace.payload) : null
-    const loaded = workspace.found ? readWorkspace(savedWorkspace, collapsed) : { tree: [], documents: {} }
-    const layout = readPrefs(prefs.found ? JSON.parse(prefs.payload) : {}, loaded.documents, loaded.tree)
+    const loaded = workspace.found ? readWorkspace(savedWorkspace, readCollapsed(savedPrefs)) : { tree: [], documents: {} }
+    const layout = readPrefs(savedPrefs, loaded.documents, loaded.tree)
 
     // Credentials come back from the OS store, keyed by request id, so a workspace
     // copied to another machine keeps its requests and simply has no tokens.
@@ -570,7 +592,6 @@ export async function hydrate(): Promise<void> {
       persistenceState: 'ready',
       secretsAvailable,
       quarantinedPath: workspace.quarantined || null,
-      dataDir: await WorkspaceService.DataDir(),
     })
   } catch (error) {
     console.warn('[persistence] unavailable, running in memory:', error)
@@ -579,6 +600,7 @@ export async function hydrate(): Promise<void> {
   }
 
   installAutosave()
+  loadDataDir()
 
   /*
    * Reveal the active request, the way every other writer of `activeId` does — and
