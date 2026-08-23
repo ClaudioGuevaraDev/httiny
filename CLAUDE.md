@@ -237,9 +237,11 @@ list without also adding `environmentSecretsOf` to its `entries` would clear eve
 variable on the first launch after an upgrade; there is a comment at the call site saying so.
 
 The URL bar and the key/value cells are one-line CodeMirror fields (`TemplateInput` over
-`singleLine.ts`), because an `<input>` cannot colour part of its own value. They mount the
-editor on **first focus** and render coloured spans until then, so a twenty-row grid does not
-hang forty MutationObservers off the element the user scrolls. React key stability stops
+`singleLine.ts`), because an `<input>` cannot colour part of its own value. They load *and*
+mount the editor on **first focus** and render coloured spans until then, so a twenty-row grid
+does not hang forty MutationObservers off the element the user scrolls — and the URL bar, which
+is on screen from the first paint, does not put the editor stack in the startup chunk. See
+Scale below for the second half of that. React key stability stops
 being a nicety there and becomes correctness — an unstable key destroys and rebuilds an
 `EditorView` per keystroke, which is what `parseParams`' comment now records. The auth panel
 keeps plain `<input>`s: its values are resolved, but it is a form rather than a grid, a
@@ -460,15 +462,31 @@ compares the `environments` **array** and not the collection node, because
 `installBodyRelease` needs no change: an evicted id looks exactly like any other discard, so
 the Go-side bytes go with it.
 
-**The startup chunk carries only what the first paint needs.** The five dialogs already split
-shell from body, so four bodies are `React.lazy`; the seven rarely-met response viewers are
-too. Two static edges had to be cut for the code view to leave: `copySnippet`'s import of the
-snippet barrel (now inside the already-async function) and `store.ts`'s import of the target
-table (now `snippets/targets.ts`, with the generators behind a `Record<SnippetTarget, …>` so
-the "no target without a generator" invariant survives as a type error). `styles/fonts.css`
-declares the four latin faces by hand because a Wails binary embeds every asset — the eight
-non-latin subsets `unicode-range` would simply never fetch in a browser were shipping in the
-installer regardless.
+**The startup chunk carries only what the first paint needs**, which took it from 917 KB to
+418 KB. The five dialogs already split shell from body, so four bodies are `React.lazy`; the
+seven rarely-met response viewers are too. Two static edges had to be cut for the code view
+to leave: `copySnippet`'s import of the snippet barrel (now inside the already-async
+function) and `store.ts`'s import of the target table (now `snippets/targets.ts`, with the
+generators behind a `Record<SnippetTarget, …>` so the "no target without a generator"
+invariant survives as a type error). `styles/fonts.css` declares the four latin faces by hand
+because a Wails binary embeds every asset — the eight non-latin subsets `unicode-range` would
+simply never fetch in a browser were shipping in the installer regardless.
+
+**CodeMirror was half of it, and nothing mounts one at first paint.** The default panel is
+Params so `BodyEditor` is not rendered, `TextBody` is unreachable until a response exists, and
+`TemplateInput` paints spans until it is focused — the stack was there on static imports
+alone, and four modules went further and *executed* it at import time (two themes as
+StyleModules, `history()`, `autocompletion()`, `tooltips({parent: body})`, five stream
+grammars, a Lezer parse table). The two full editors are `lazy` now, `TextBody` through a
+module of its own because four callers render it and one split point beats four, and
+`TemplateInput` reaches `mountSingleLine` through a dynamic `import()` on focus — which is
+why the `EditorView` construction lives in `singleLine.ts` behind a small imperative handle
+and this component holds no CodeMirror value. What its markup switches on is "is there an
+editor" and not "has one been asked for", so the field stays a focusable textbox with a name
+while the chunk is in flight. `main.tsx` warms that chunk on the first idle callback: a split
+pays its cost at the far end, and 400 KB to parse on the first click into the URL bar would
+be the worse trade. `grep -c cm-content dist/assets/index-*.js` returning 0 is the check that
+none of this has quietly regressed.
 
 Layout and shortcuts live in `App.tsx` and `useGlobalShortcuts.ts`: a CSS-grid shell with pointer-event resizers (sidebar width in px, request/response split as an `fr` percentage) and window-level `Ctrl/Cmd+S` (flush to disk now), `Ctrl/Cmd+W` (close), `Ctrl/Cmd+Enter` (send), and `Escape` (abort in-flight).
 
