@@ -1,7 +1,7 @@
 import { useMemo } from 'react'
 import { useT } from '../../language'
 import { detectDelimiter, parseCsv } from '../../response/csv'
-import { TextBody } from './TextBody'
+import { TextBody } from './TextBodyLazy'
 
 /** Beyond this the table is truncated: a browser will lay out 200k rows, slowly. */
 const MAX_ROWS = 5000

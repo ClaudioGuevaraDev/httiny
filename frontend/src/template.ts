@@ -234,3 +234,17 @@ export const replaceQuery = (url: string, rows: KeyValueRow[]): string => {
     .join('&')
   return `${base}${query ? `?${query}` : ''}${hash}`
 }
+
+/**
+ * A value collapsed to one line.
+ *
+ * Lives here rather than beside `singleLine.ts`'s transaction filter, which is its other
+ * caller, because `TemplateInput` needs it on the path where the editor does *not* exist:
+ * the effect that syncs a store change into a field runs whether or not CodeMirror has
+ * been loaded, and this file is the pure leaf that both sides can reach without it.
+ *
+ * A newline can only arrive from a hand-edited `workspace.json` or a pasted multi-line
+ * string. The filter in `SINGLE_LINE` covers every edit made in the field; this covers a
+ * document set from outside, where no filter runs.
+ */
+export const flatten = (value: string): string => value.replace(/[\r\n]+/g, '')

@@ -5,7 +5,7 @@ import { useT } from '../../language'
 import { containerPaths, flatten, parseJson } from '../../response/json'
 import type { JsonRow } from '../../response/json'
 import { useCopy } from '../../useCopy'
-import { TextBody } from './TextBody'
+import { TextBody } from './TextBodyLazy'
 
 /** Published to CSS so the windowing maths and the rule cannot drift apart. */
 const ROW_HEIGHT = 22

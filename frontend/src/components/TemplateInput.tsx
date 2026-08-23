@@ -1,8 +1,7 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
-import { Compartment, EditorState, EditorView, placeholder as placeholderExt } from '@uiw/react-codemirror'
 import { useVariables } from '../environments'
-import { SINGLE_LINE, contentAttrs, flatten, fromStore, submitFacet } from '../singleLine'
+import type { SingleLineEditor } from '../singleLine'
 import { VAR_CLASS, VAR_UNKNOWN_CLASS, templateSpans } from '../template'
 
 export type TemplateVariant = 'url' | 'cell'
@@ -33,6 +32,16 @@ export type TemplateVariant = 'url' | 'cell'
  * blur would free the observers but reset the undo history on every visit and pay a fresh
  * `EditorView` per focus change, so the live count is "cells the user actually touched" —
  * and switching request tabs unmounts the grid and takes them all with it.
+ *
+ * **The module is deferred too, not just the view.** Everything above was true while
+ * `@uiw/react-codemirror` was still a static import here, which meant the URL bar — on
+ * screen from the first paint, rendering spans — put the entire editor stack in the
+ * startup chunk. Focus now triggers a dynamic `import('../singleLine')` and the view is
+ * built by `mountSingleLine` once it lands; this file holds a `SingleLineEditor` handle
+ * and no CodeMirror value at all. The two refs that already existed for the gap between
+ * the click and the view — where the pointer landed, and whether Tab brought us here —
+ * are what make the longer gap free: they were solving this exact problem one frame at a
+ * time, and now solve it across a chunk load.
  */
 export function TemplateInput({
   value,
@@ -59,8 +68,11 @@ export function TemplateInput({
   onSubmit?: () => void
 }) {
   const host = useRef<HTMLDivElement>(null)
-  const view = useRef<EditorView | null>(null)
+  const editor = useRef<SingleLineEditor | null>(null)
+  /** Focus has asked for an editor. The module may not have arrived yet. */
   const [live, setLive] = useState(false)
+  /** `mountSingleLine`, once the chunk is in. `null` until then, and once per app not per field. */
+  const [mount, setMount] = useState<typeof import('../singleLine').mountSingleLine | null>(null)
 
   // Stable holders, so nothing the module-scope extensions read ever changes identity
   // and there is never anything to reconfigure. Written in an effect rather than during
@@ -82,78 +94,61 @@ export function TemplateInput({
   const known = useVariables()
   const spans = useMemo(() => templateSpans(value, known), [value, known])
 
-  // Per instance, created once. Compartments so a change of language reconfigures two
-  // small facets rather than rebuilding the field. `useState` with an initialiser rather
-  // than `useRef(new Compartment())`, which would both allocate on every render and read
-  // a ref during one.
-  const [attrs] = useState(() => new Compartment())
-  const [hint] = useState(() => new Compartment())
+  // Fetches the editor the first time a field is focused, and never again: the resolved
+  // module is cached by the bundler, so every later field gets it from memory. `setMount`
+  // is in a promise callback rather than in the effect body, which is the shape the
+  // compiler's rules ask for and the reason this is not a layout effect.
+  useEffect(() => {
+    if (!live || mount) return
+    let wanted = true
+    void import('../singleLine').then(module => {
+      if (wanted) setMount(() => module.mountSingleLine)
+    })
+    return () => {
+      wanted = false
+    }
+  }, [live, mount])
 
   useLayoutEffect(() => {
-    if (!live || !host.current) return
-    const created = new EditorView({
-      parent: host.current,
-      state: EditorState.create({
-        // A newline can only arrive here from a hand-edited workspace.json, but a
-        // two-line document in a 31px box is not a state worth rendering. The filter in
-        // `SINGLE_LINE` covers every later edit; the initial document is not filtered.
-        doc: flatten(value),
-        extensions: [
-          SINGLE_LINE,
-          attrs.of(EditorView.contentAttributes.of(contentAttrs(ariaLabel, variant === 'url' ? 'url' : undefined))),
-          hint.of(placeholder ? placeholderExt(placeholder) : []),
-          submitFacet.of(submit),
-          EditorView.updateListener.of(update => {
-            if (!update.docChanged) return
-            if (update.transactions.some(tr => tr.annotation(fromStore))) return
-            change.current(update.state.doc.toString())
-          }),
-        ],
-      }),
-    })
-    view.current = created
+    if (!mount || !host.current) return
     const at = point.current
     point.current = null
-    created.dispatch({
-      selection: at
-        ? { anchor: created.posAtCoords(at) ?? created.state.doc.length }
-        : byKeyboard.current
-          ? // Tab into an `<input>` selects its value. Match it.
-            { anchor: 0, head: created.state.doc.length }
-          : { anchor: created.state.doc.length },
+    const created = mount({
+      parent: host.current,
+      doc: value,
+      ariaLabel,
+      urlVariant: variant === 'url',
+      hint: placeholder,
+      change,
+      submit,
+      at,
+      selectAll: byKeyboard.current,
     })
-    created.focus()
+    editor.current = created
     return () => {
       created.destroy()
-      view.current = null
+      editor.current = null
     }
     // `value` and the callbacks are deliberately absent: the document is synced by the
     // effect below and the callbacks are read through refs, so neither may rebuild the
     // view. StrictMode runs this mount→unmount→mount in dev, which `destroy()` removing
-    // `view.dom` makes idempotent — hence the pending click point being a ref.
+    // the view's DOM makes idempotent — hence the pending click point being a ref.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [live, variant, attrs, hint])
+  }, [mount, variant])
 
   useEffect(() => {
-    const editor = view.current
-    if (!editor) return
-    const flat = flatten(value)
-    if (flat === editor.state.doc.toString()) return
-    // Annotated so the update listener can tell "the store changed under me" from "the
-    // user typed", which is what stops the params↔URL sync from feeding back.
-    editor.dispatch({ changes: { from: 0, to: editor.state.doc.length, insert: flat }, annotations: fromStore.of(true) })
+    editor.current?.setValue(value)
   }, [value])
 
   useEffect(() => {
-    view.current?.dispatch({
-      effects: [
-        attrs.reconfigure(EditorView.contentAttributes.of(contentAttrs(ariaLabel, variant === 'url' ? 'url' : undefined))),
-        // `placeholder()` captures its string at construction, and the app changes
-        // language without reloading.
-        hint.reconfigure(placeholder ? placeholderExt(placeholder) : []),
-      ],
-    })
-  }, [ariaLabel, placeholder, variant, attrs, hint])
+    editor.current?.reconfigure(ariaLabel, variant === 'url', placeholder)
+  }, [ariaLabel, placeholder, variant])
+
+  // Everything the markup below switches on is "is there an editor in here", not "has one
+  // been asked for". Between the two sits a chunk load, and during it the field has to go
+  // on being a focusable textbox with a name — otherwise a click would drop the tab stop
+  // and the role for as long as the import took.
+  const mounted = mount !== null
 
   return (
     <div
@@ -163,23 +158,23 @@ export function TemplateInput({
       /* Focusable only while static, but `-1` still answers a programmatic `.focus()` —
          which is what keeps the INVALID_URL placeholder's "fix the URL" button working
          once this is a CodeMirror. */
-      tabIndex={live ? -1 : 0}
+      tabIndex={mounted ? -1 : 0}
       /* The static div announces as the editable field it is about to be: focus is
          precisely the moment it becomes one, and the element that then takes focus
          carries the same role and the same name. A focusable div with no role would
          announce as "group" and say nothing at all. */
-      role={live ? undefined : 'textbox'}
-      aria-label={live ? undefined : ariaLabel}
-      aria-multiline={live ? undefined : 'false'}
+      role={mounted ? undefined : 'textbox'}
+      aria-label={mounted ? undefined : ariaLabel}
+      aria-multiline={mounted ? undefined : 'false'}
       onPointerDown={event => {
-        if (live) return
+        if (mounted) return
         point.current = { x: event.clientX, y: event.clientY }
         setLive(true)
       }}
       onFocus={event => {
         // Ignore focus bubbling up out of `.cm-content`.
         if (event.target !== event.currentTarget) return
-        if (live) view.current?.focus()
+        if (mounted) editor.current?.focus()
         else {
           byKeyboard.current = point.current === null
           setLive(true)
@@ -190,7 +185,7 @@ export function TemplateInput({
           flex items splitting the chips from the text runs between them. It also carries
           the line height the mounted editor uses, so the text does not shift vertically
           on the first click. */}
-      {!live && (
+      {!mounted && (
         <span className="template-line">{spans.length ? renderSpans(value, spans) : value || <span className="template-hint">{placeholder}</span>}</span>
       )}
     </div>

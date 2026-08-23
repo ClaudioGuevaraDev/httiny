@@ -1,4 +1,4 @@
-import { useMemo } from 'react'
+import { lazy, Suspense, useMemo } from 'react'
 import { Code2, Send, Square, Upload } from 'lucide-react'
 import type { MessageKey } from '../i18n'
 import { useT } from '../language'
@@ -15,7 +15,12 @@ import { MethodChip } from './MethodChip'
 import { Placeholder, PlaceholderAction } from './Placeholder'
 import { Select } from './Select'
 import { TemplateInput } from './TemplateInput'
-import { BodyEditor } from './request/BodyEditor'
+/**
+ * The body editor is a full CodeMirror, and the default panel is Params (`store.ts`), so
+ * it is never mounted at launch — but a static import put the whole editor stack in the
+ * startup chunk anyway. `fallback={null}`: the chunk comes off the embedded filesystem.
+ */
+const BodyEditor = lazy(() => import('./request/BodyEditor').then(module => ({ default: module.BodyEditor })))
 
 type AuthType = RequestDocument['auth']['type']
 
@@ -402,7 +407,11 @@ export function RequestEditor() {
       <div className="request-panel" id="request-panel" role="tabpanel" aria-labelledby={`request-panel-tab-${requestPanel}`} tabIndex={-1}>
         {requestPanel === 'params' && <RequestRows request={request} field="params" />}
         {requestPanel === 'headers' && <RequestRows request={request} field="headers" />}
-        {requestPanel === 'body' && <BodyEditor request={request} />}
+        {requestPanel === 'body' && (
+          <Suspense fallback={null}>
+            <BodyEditor request={request} />
+          </Suspense>
+        )}
         {requestPanel === 'auth' && <AuthEditor request={request} />}
       </div>
     </section>

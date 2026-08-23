@@ -49,9 +49,32 @@ void hydrate().then(() => {
       <App />
     </StrictMode>,
   )
+  warmEditor()
   // Deliberately after the render and deliberately not awaited: the check is a
   // network round trip to GitHub, and nothing about the first paint depends on it.
   // It stays silent unless it finds something, so in the common case the user never
   // learns it happened. `checkForUpdate` swallows its own failures.
   void checkForUpdate()
 })
+
+/**
+ * Pulls the CodeMirror chunk in once the app is idle.
+ *
+ * Splitting it out took roughly half the startup chunk off the first paint, but the cost
+ * of a split is paid at the other end: the first click into the URL bar would wait for
+ * ~400 KB to load and parse before a caret appeared. Fetching it during the first idle
+ * period keeps the whole saving — nothing here blocks the paint — and means the field is
+ * already warm by the time anyone reaches it. The same chunk backs the body editor and
+ * the response viewer, so this warms all three.
+ *
+ * `requestIdleCallback` with a timeout, and a plain timer where it does not exist: not
+ * every WebKit build has it, and a warm-up that never runs would be a silent regression
+ * rather than a visible one. Tested with `typeof` rather than `in`, because `lib.dom`
+ * declares the method unconditionally and `in` would narrow the fallback branch to
+ * `never`.
+ */
+function warmEditor(): void {
+  const load = () => void import('./singleLine')
+  if (typeof window.requestIdleCallback === 'function') window.requestIdleCallback(load, { timeout: 2000 })
+  else window.setTimeout(load, 1000)
+}

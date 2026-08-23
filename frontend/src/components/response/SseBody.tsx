@@ -1,7 +1,7 @@
 import { useMemo } from 'react'
 import { useT } from '../../language'
 import { parseSse } from '../../response/sse'
-import { TextBody } from './TextBody'
+import { TextBody } from './TextBodyLazy'
 
 /**
  * A `text/event-stream` transcript, split into the events it encodes.

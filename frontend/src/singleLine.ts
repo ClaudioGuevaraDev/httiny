@@ -1,8 +1,9 @@
 import { acceptCompletion, autocompletion, completionKeymap } from '@codemirror/autocomplete'
 import { history, historyKeymap, standardKeymap } from '@codemirror/commands'
-import { Annotation, EditorState, Facet, Prec, keymap } from '@uiw/react-codemirror'
+import { Annotation, Compartment, EditorState, EditorView, Facet, Prec, keymap, placeholder } from '@uiw/react-codemirror'
 import type { ChangeSpec, Command, Extension, KeyBinding } from '@uiw/react-codemirror'
 import { completionChrome, inputTheme } from './editorTheme'
+import { flatten } from './template'
 import { templateVariables } from './templateEditor'
 
 /**
@@ -81,8 +82,6 @@ const singleLineFilter = EditorState.transactionFilter.of(tr => {
   return { changes, scrollIntoView: true }
 })
 
-/** The same collapse applied to a document set from outside, where no filter runs. */
-export const flatten = (value: string): string => value.replace(/[\r\n]+/g, '')
 
 export const SINGLE_LINE: Extension = [
   inputTheme,
@@ -120,8 +119,105 @@ export const SINGLE_LINE: Extension = [
  * no password manager offers to fill it. `spellcheck`, `autocorrect`, `autocapitalize`
  * and `writingsuggestions` are already off by CodeMirror's own default.
  */
-export const contentAttrs = (label: string, inputMode?: string): Record<string, string> => ({
+const contentAttrs = (label: string, inputMode?: string): Record<string, string> => ({
   'aria-label': label,
   'aria-multiline': 'false',
   ...(inputMode ? { inputmode: inputMode } : {}),
 })
+
+/** What `TemplateInput` can do to a mounted field. Everything else about it stays in here. */
+export interface SingleLineEditor {
+  /** Writes a document that came from the store, annotated so the listener ignores it. */
+  setValue: (value: string) => void
+  /** Re-applies the two things that follow a language change or a relabel. */
+  reconfigure: (ariaLabel: string, urlVariant: boolean, hint: string | undefined) => void
+  focus: () => void
+  destroy: () => void
+}
+
+/**
+ * Builds the field, and is the whole reason this module can be loaded on demand.
+ *
+ * `TemplateInput` used to construct the `EditorView` itself, which meant importing
+ * `EditorView`, `EditorState`, `Compartment` and `placeholder` as *values* — so the URL
+ * bar, which is on screen from the first paint, dragged all of CodeMirror into the startup
+ * chunk even though it renders coloured spans and builds nothing until it is focused. Half
+ * the chunk was an editor that at that moment did not exist. Everything CodeMirror-shaped
+ * now lives behind this function, and the component holds a `SingleLineEditor` it got from
+ * a dynamic import.
+ *
+ * The two compartments are per field and created here rather than in the component, for
+ * the same reason: they are CodeMirror values.
+ *
+ * `change` and `submit` arrive as refs and not as functions. The extensions read them at
+ * dispatch time, so a re-render that hands the field a new callback does not have to
+ * rebuild anything — which is the property the module-scope `SINGLE_LINE` depends on.
+ */
+export function mountSingleLine(options: {
+  parent: HTMLElement
+  doc: string
+  ariaLabel: string
+  urlVariant: boolean
+  hint: string | undefined
+  change: { readonly current: (value: string) => void }
+  submit: { readonly current: (() => void) | undefined }
+  /** Where a pointer landed before the field existed, in client coordinates. */
+  at: { x: number; y: number } | null
+  /** Whether the field was reached by keyboard, which selects all the way Tab does. */
+  selectAll: boolean
+}): SingleLineEditor {
+  const attrs = new Compartment()
+  const hint = new Compartment()
+
+  const view = new EditorView({
+    parent: options.parent,
+    state: EditorState.create({
+      // A newline can only arrive here from a hand-edited workspace.json, but a
+      // two-line document in a 31px box is not a state worth rendering. The filter in
+      // `SINGLE_LINE` covers every later edit; the initial document is not filtered.
+      doc: flatten(options.doc),
+      extensions: [
+        SINGLE_LINE,
+        attrs.of(EditorView.contentAttributes.of(contentAttrs(options.ariaLabel, options.urlVariant ? 'url' : undefined))),
+        hint.of(options.hint ? placeholder(options.hint) : []),
+        submitFacet.of(options.submit),
+        EditorView.updateListener.of(update => {
+          if (!update.docChanged) return
+          if (update.transactions.some(tr => tr.annotation(fromStore))) return
+          options.change.current(update.state.doc.toString())
+        }),
+      ],
+    }),
+  })
+
+  view.dispatch({
+    selection: options.at
+      ? { anchor: view.posAtCoords(options.at) ?? view.state.doc.length }
+      : options.selectAll
+        ? // Tab into an `<input>` selects its value. Match it.
+          { anchor: 0, head: view.state.doc.length }
+        : { anchor: view.state.doc.length },
+  })
+  view.focus()
+
+  return {
+    setValue: value => {
+      const flat = flatten(value)
+      if (flat === view.state.doc.toString()) return
+      // Annotated so the update listener can tell "the store changed under me" from "the
+      // user typed", which is what stops the params↔URL sync from feeding back.
+      view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: flat }, annotations: fromStore.of(true) })
+    },
+    reconfigure: (ariaLabel, urlVariant, next) =>
+      view.dispatch({
+        effects: [
+          attrs.reconfigure(EditorView.contentAttributes.of(contentAttrs(ariaLabel, urlVariant ? 'url' : undefined))),
+          // `placeholder()` captures its string at construction, and the app changes
+          // language without reloading.
+          hint.reconfigure(next ? placeholder(next) : []),
+        ],
+      }),
+    focus: () => view.focus(),
+    destroy: () => view.destroy(),
+  }
+}

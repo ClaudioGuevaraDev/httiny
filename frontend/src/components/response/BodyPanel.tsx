@@ -10,7 +10,7 @@ import { ImageBody } from './ImageBody'
 import { JsonTree } from './JsonTree'
 import { MediaBody } from './MediaBody'
 import { SvgBody } from './SvgBody'
-import { TextBody } from './TextBody'
+import { TextBody } from './TextBodyLazy'
 
 /**
  * The viewers for formats an ordinary session never meets, split out of the startup chunk.
