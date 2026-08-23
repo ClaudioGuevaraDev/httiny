@@ -2,6 +2,7 @@ import { Call, CancelError } from '@wailsio/runtime'
 import { HTTPService } from '../bindings/github.com/ClaudioGuevaraDev/httiny/internal/httpexec'
 import type { KeyValue, TLSInfo } from '../bindings/github.com/ClaudioGuevaraDev/httiny/internal/httpexec'
 import { RequestFailure } from './errors'
+import { resolveFor } from './environments'
 import { toRequestDTO } from './requestDTO'
 import { BYTE_FORMATS, TEXT_FORMATS } from './types'
 import type { KeyValueRow, RequestExecutor, ResponseFormat, TlsInfo } from './types'
@@ -58,7 +59,7 @@ export const goExecutor: RequestExecutor = {
       // different requests. `id` in it keys the bytes Go retains for a byte-backed
       // response, so `bodyUrl` can point back at them — the document id, which is what
       // `responses` and `bodyViews` are keyed by too, not the tree node id.
-      result = await HTTPService.Send(toRequestDTO(request)).cancelOn(signal)
+      result = await HTTPService.Send(toRequestDTO(request, resolveFor(request.id))).cancelOn(signal)
     } catch (error) {
       // `runRequest` discards results for an aborted controller, so a cancellation
       // just needs to stop unwinding here.

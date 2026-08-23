@@ -49,18 +49,39 @@ const SECRET_HEADERS: Record<string, string> = {
  * A file part is not touched. Its value is a path, and a path is not a secret — it is
  * what the request is, and a snippet that redacted it would not run.
  *
- * The textual body is deliberately untouched too. A password can appear in a JSON
- * payload, but finding it would mean guessing at the shape of someone else's schema.
+ * The textual body used to be untouched entirely, for the reason above: a password can
+ * appear in a JSON payload, but finding it would mean guessing at the shape of someone
+ * else's schema. `secrets` is what changes that, and only for values we were *told* are
+ * secrets — the active environment's locked variables. That is a strictly better rule
+ * than the header list wherever it applies, because a variable substituted into
+ * `X-Tenant-Key`, a query parameter or a body would otherwise be printed in the clear
+ * with the toggle on; the list stays as the fallback for a credential typed straight
+ * into the grid, which belongs to no environment.
+ *
+ * Longest value first, so a variable whose value contains another's is masked as itself
+ * rather than being half-rewritten from the inside.
  */
-export const redactWire = (wire: Wire): Wire => ({
-  ...wire,
-  headers: wire.headers.map(header => {
-    const variable = SECRET_HEADERS[header.key.toLowerCase()]
-    return variable ? { ...header, value: `$${variable}` } : header
-  }),
-  parts: wire.parts.map(part => {
-    if (part.kind === 'file') return part
-    const variable = SECRET_HEADERS[part.name.toLowerCase().split('_').join('-')]
-    return variable ? { ...part, value: `$${variable}` } : part
-  }),
-})
+export const redactWire = (wire: Wire, secrets: ReadonlyMap<string, string> = new Map()): Wire => {
+  const ordered = [...secrets].filter(([, value]) => value).sort((a, b) => b[1].length - a[1].length)
+  const mask = (text: string): string => {
+    let out = text
+    for (const [name, value] of ordered) out = out.split(value).join(`$${name.toUpperCase().replace(/[^A-Z0-9]/g, '_')}`)
+    return out
+  }
+
+  return {
+    ...wire,
+    url: mask(wire.url),
+    target: mask(wire.target),
+    headers: wire.headers.map(header => {
+      const variable = SECRET_HEADERS[header.key.toLowerCase()]
+      return variable ? { ...header, value: `$${variable}` } : { ...header, value: mask(header.value) }
+    }),
+    body: mask(wire.body),
+    parts: wire.parts.map(part => {
+      if (part.kind === 'file') return part
+      const variable = SECRET_HEADERS[part.name.toLowerCase().split('_').join('-')]
+      return variable ? { ...part, value: `$${variable}` } : { ...part, value: mask(part.value) }
+    }),
+  }
+}

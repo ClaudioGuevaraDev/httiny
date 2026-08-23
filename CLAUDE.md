@@ -71,7 +71,9 @@ Go owns the envelope (`{version, savedAt, payload}`), atomic writes (temp + `Syn
 
 Everything autosaves (600 ms debounce, 2 s ceiling), so **there is no `dirty` flag** and no "discard unsaved changes?" dialogs. `Ctrl+S` and the Save button still exist and now mean "write now". Re-entrancy trap: the writer calls `setSaveState`, which re-enters the store subscriber — that is safe *only* because `saveState` is not part of either DTO.
 
-`auth.token` and `auth.password` **never** reach disk: they go to the OS credential store via `internal/secrets` (`go-keyring`), keyed by request id, and are merged back on load. That keeps the workspace file — and its `.bak` and quarantine copies — safe to copy or attach to a bug report. If no credential store is reachable (a Linux box with no secret-service), the app degrades to session-only tokens and says so in the sidebar footer.
+`auth.token` and `auth.password` **never** reach disk: they go to the OS credential store via `internal/secrets` (`go-keyring`), keyed by request id, and are merged back on load. That keeps the workspace file — and its `.bak` and quarantine copies — safe to copy or attach to a bug report. If no credential store is reachable (a Linux box with no secret-service), the app degrades to session-only tokens and says so in the sidebar footer. A **locked environment variable's value** is the third thing in that set, keyed `env:<collectionId>:<envId>:<varKey>` — see Template variables below.
+
+`WORKSPACE_VERSION` is at **4**, and the reason for that bump is the credential store rather than the payload. By the rule in `workspaceFile.ts` a purely additive change needs no bump, because every reader already supplies a default — but a build reading this file as 3 has readers that ignore `environments` on a collection node and a `toStoredNode` that does not write it, so its first autosave would delete every environment in the workspace and leave their credentials named by nothing, in a store that cannot be enumerated. Refusing the file is correct; the `>` guard in `hydrate` is what produces it. 2 is burnt and 3 is spent — read the doc comment before touching the number.
 
 Hydration runs in `main.tsx` **before** `createRoot`, and the autosave subscriber is installed as the last act of `hydrate()`. That ordering is what prevents both a flash of empty workspace and an autosave firing on the pre-load state and writing `[]` over real collections.
 
@@ -154,6 +156,95 @@ starting with `@` or `<` as a filename, so a text part uses `--form-string` (and
 double-quoted *inside* the `-F` argument because curl splits on `;` and `=`; and wget cannot
 send multipart at all, so that target prints why instead of a command that would post the
 field names as text.
+
+### Template variables
+
+A collection owns its environments outright: `environments: Environment[]` and
+`activeEnvironmentId` live on `CollectionNode`, in `workspace.json`'s `tree`. There is no
+workspace-wide pool and no global picker, and that is the whole design — the version that
+shipped in 0.31.0 (`c00f4f8`, reverted in `d3d11f5`) put a shared pool behind one picker at
+the end of the tab strip, which had to carry a label saying which collection it was really
+acting on, and it was backed out for being global. The picker now lives in the collection's
+own sidebar panel under its name, and the manager is a `<dialog>` addressed by
+`environmentsFor` — a collection **id**, not a boolean, so the rail moving under it cannot
+retarget the edits made in it.
+
+On the node rather than in a side table keyed by collection id, and that is not the
+denormalisation `RequestNode` warns against: there is no second copy to drift from, and one
+writer owns it. What it buys is that `removeNode` deletes a collection's environments with
+the collection, `WorkspaceState` gains no field, and `readWorkspace`/`readPrefs` keep their
+signatures. **`activeEnvironmentId` is workspace data and not a `ui.json` preference**,
+because it decides which host a send reaches and which token signs it — the same class of
+choice as `auth.type`, not the same class as `expanded`. Keeping it beside the list it
+indexes is also what lets `readTree` validate the reference three lines from where it reads
+both; in `ui.json` it would be a machine-local pointer into a portable list and validating
+it would mean handing `readPrefs` the tree.
+
+The tiering is the one `i18n/` uses. `template.ts` is a pure leaf — the tokeniser,
+`resolverFor`, `resolveUrl` and `replaceQuery`, which lives there rather than in `store.ts`
+so the encoder sits beside the decoder it has to agree with (`template.ts` imports
+`splitUrl`, so the store must never import back). `store.ts` answers which collection a
+request belongs to. `environments.ts` turns that into a resolver. `templateEditor.ts` is the
+only module that knows both plus CodeMirror.
+
+**Resolution keys off the request's own collection, never the rail's.** `RequestTabs`
+iterates `tabs` unfiltered and `selectCollection` moves the rail without touching
+`activeId`, so keying a send off the rail would make Ctrl+Enter mean something other than
+what the editor shows. `environmentFor` therefore has no fallback where `collectionInPlay`
+— the *interface* question — does; that asymmetry is deliberate and documented in
+`environments.ts`. `deleteEnvironment` and `readTree` both drop a stale pick to `null` and
+never promote a survivor, for the same reason.
+
+Go never learns variables exist: `buildRequest` reads every string verbatim, so one pass
+over the DTO in `toRequestDTO(request, resolve)` covers the whole surface — and because
+`Wire` and `Send` share that projection, the code view shows the resolved request for free
+and cannot disagree with the send. `auth` **has** to be resolved in TypeScript: `applyAuth`
+base64s the basic pair, so a placeholder reaching Go comes back as unrecoverable base64.
+Paths, content types, the unions and `id` are deliberately not resolved.
+
+`resolveUrl` is the non-obvious part. `replaceQuery` percent-encodes, so a `{{token}}` typed
+into the Params grid lands on disk as `%7B%7Btoken%7D%7D` while the grid still shows
+`{{token}}` — the only broken artefact would be the URL actually sent. So the query is
+walked structurally: each pair is decoded, substituted only if a half holds `{{`, and
+re-encoded after. `decodeURIComponent` throws on a lone `%` and that is caught, because a
+URL half-typed in the bar transits through `?a=100%` constantly with `useWire` re-resolving
+on every keystroke.
+
+`subscribeEnvironment` is **two** clauses where the global design needed three, and that is
+what node ownership buys: the identity clause names every field of `ResolutionState` (without
+it `setBody` would reach the listener on every body keystroke, and the listener dispatches
+into the view that is mid-update), and the derived clause compares the resolved `Environment`
+object — which catches a retyped row, a switched pick and a tab moving collections, and
+rejects a folder expand for free because `mapTree` copies a collection node as `{ ...node }`
+and the `Environment` inside it is the same object. **A `mapTree` callback must therefore
+never rebuild a collection node from its parts.**
+
+Locked variables go to the credential store keyed `env:<collectionId>:<envId>:<varKey>`, one
+entry per variable — `secrets.Set` rejects anything over 2560 bytes, so a blob per
+environment would fail the write for every secret in it at once. Keyed by the variable's
+**key** and never its row id, which `readVariables` regenerates from position; the collection
+id is in there so a hand-copied collection cannot alias the original's credentials.
+`StoredVariable` is a union whose `secret: true` arm has no `value` field, so writing a
+credential into `workspace.json` is a compile error. `secretKeysOf` names only the locked
+variables and lets `lastKeep` clear one that is unlocked — naming them all would put a
+`keyring.Delete` per unlocked row into every save.
+
+**`legacySecretKeys` must not be repurposed for this.** It sweeps the *old* three-segment
+`env:<envId>:<key>` shape off a stale top-level `environments` field, and it is safe to keep
+running only because the two id namespaces are disjoint. Adding `secretKeysOf` to its `keep`
+list without also adding `environmentSecretsOf` to its `entries` would clear every locked
+variable on the first launch after an upgrade; there is a comment at the call site saying so.
+
+The URL bar and the key/value cells are one-line CodeMirror fields (`TemplateInput` over
+`singleLine.ts`), because an `<input>` cannot colour part of its own value. They mount the
+editor on **first focus** and render coloured spans until then, so a twenty-row grid does not
+hang forty MutationObservers off the element the user scrolls. React key stability stops
+being a nicety there and becomes correctness — an unstable key destroys and rebuilds an
+`EditorView` per keystroke, which is what `parseParams`' comment now records. The auth panel
+keeps plain `<input>`s: its values are resolved, but it is a form rather than a grid, a
+contenteditable cannot mask a password, and a `<label>` does not associate with a wrapper
+div. `description` keeps its `<input>` too — it is prose, and CodeMirror hard-wires
+`spellcheck` off.
 
 ### Response formats
 

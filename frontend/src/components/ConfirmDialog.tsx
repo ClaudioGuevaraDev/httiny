@@ -1,7 +1,7 @@
 import { useEffect, useRef, type ReactNode } from 'react'
 import { RotateCcw, Trash2 } from 'lucide-react'
 import { useT } from '../language'
-import { findNode, requestIdsIn, useAppStore } from '../store'
+import { collectionsIn, findNode, requestIdsIn, useAppStore } from '../store'
 import type { ConfirmIntent, TreeNode } from '../types'
 
 /**
@@ -42,8 +42,17 @@ export function ConfirmDialog() {
   // `findNode` hands back the node itself, so its identity is stable and this
   // re-renders only when the tree actually changes.
   const node = useAppStore(s => (intent?.kind === 'deleteNode' ? findNode(s.tree, intent.nodeId) : null))
+  // The environment's *name*, not the object: it is all the question needs, and a string
+  // compares by value — so this re-renders on a rename and on nothing else.
+  const environmentName = useAppStore(s =>
+    intent?.kind === 'deleteEnvironment'
+      ? (collectionsIn(s.tree)
+          .find(c => c.id === intent.collectionId)
+          ?.environments.find(env => env.id === intent.environmentId)?.name ?? null)
+      : null,
+  )
   const dialogRef = useRef<HTMLDialogElement>(null)
-  const copy = useCopy(intent, node)
+  const copy = useCopy(intent, node, environmentName)
   const open = copy !== null
 
   useEffect(() => {
@@ -84,7 +93,7 @@ export function ConfirmDialog() {
  * `useT` is the only hook here and it runs unconditionally, so the early returns below
  * are just returns.
  */
-function useCopy(intent: ConfirmIntent | null, node: TreeNode | null): Copy | null {
+function useCopy(intent: ConfirmIntent | null, node: TreeNode | null, environmentName: string | null): Copy | null {
   const { t, plural } = useT()
   if (!intent) return null
 
@@ -109,6 +118,20 @@ function useCopy(intent: ConfirmIntent | null, node: TreeNode | null): Copy | nu
             ? t('tree.confirm.empty', { name: node.name })
             : plural('tree.confirm.container', count, { name: node.name })
       return { tone: 'danger', icon: <Trash2 size={18} />, title, detail: t('tree.confirm.detail'), action: t('tree.confirm.action') }
+    }
+    case 'deleteEnvironment': {
+      // Gone already is not a question anyone can answer — the rule the node case states.
+      if (environmentName === null) return null
+      // Danger and a warning about the credentials, because this is the one delete in the
+      // app that reaches outside the workspace file: a locked variable's value lives in the
+      // OS credential store, and `SaveSecrets` clears it on the next save.
+      return {
+        tone: 'danger',
+        icon: <Trash2 size={18} />,
+        title: t('env.confirm.title', { name: environmentName }),
+        detail: t('env.confirm.detail'),
+        action: t('env.confirm.action'),
+      }
     }
     case 'resetSettings':
       // Accent, not danger: red in this app means something is destroyed and cannot come

@@ -1,8 +1,18 @@
 import { Service as WorkspaceService } from '../bindings/github.com/ClaudioGuevaraDev/httiny/internal/workspace'
-import { revealPatch, useAppStore } from './store'
-import type { RequestDocument } from './types'
+import { collectionsIn, revealPatch, useAppStore } from './store'
+import type { RequestDocument, TreeNode } from './types'
 import type { WorkspaceState } from './workspaceFile'
-import { PREFS_VERSION, WORKSPACE_VERSION, legacySecretKeys, readCollapsed, readPrefs, readWorkspace, toPrefsFile, toWorkspaceFile } from './workspaceFile'
+import {
+  PREFS_VERSION,
+  WORKSPACE_VERSION,
+  environmentSecretKey,
+  legacySecretKeys,
+  readCollapsed,
+  readPrefs,
+  readWorkspace,
+  toPrefsFile,
+  toWorkspaceFile,
+} from './workspaceFile'
 
 /**
  * Disk persistence: hydrate once at startup, then autosave.
@@ -71,6 +81,62 @@ const secretsOf = (documents: Record<string, RequestDocument>) =>
     .filter(doc => doc.auth.type !== 'none' && (doc.auth.token || doc.auth.password))
     .map(doc => ({ id: doc.id, token: doc.auth.token, password: doc.auth.password }))
 
+/**
+ * The environment variables the user locked, one credential entry per variable.
+ *
+ * Per variable and not one blob per environment: `secrets.Set` rejects a marshalled entry
+ * over 2560 bytes and a blob would be doubly encoded, so one oversized value would fail
+ * the write for every secret in that environment at once — reported only in
+ * `SecretsResult.error`, which nothing surfaces per row. Per variable the cap is spent on
+ * one credential and a failure is isolated. It is also what lets the `keep` sweep name a
+ * single renamed variable.
+ *
+ * The value goes in `token` and `password` stays empty. `Entry.Empty()` is both fields
+ * blank, so clearing a value deletes the entry without Go needing to know what this is —
+ * which is why environments need no Go change at all.
+ *
+ * Not filtered on `enabled`: unticking a row is not deleting it, and the value has to come
+ * back when it is ticked again. `secretsIn` in `environments.ts` *does* filter, because a
+ * mask for a value that is not being substituted would blank a snippet for nothing.
+ *
+ * A `Map`, so two rows typed with the same key write one entry instead of racing. Last
+ * wins, which is the rule `variableMap` applies to the same collision.
+ */
+const environmentSecretsOf = (tree: TreeNode[]) => {
+  const entries = new Map<string, { id: string; token: string; password: string }>()
+  for (const collection of collectionsIn(tree)) {
+    for (const env of collection.environments) {
+      for (const variable of env.variables) {
+        const key = variable.key.trim()
+        if (!variable.secret || !key || !variable.value) continue
+        const id = environmentSecretKey(collection.id, env.id, key)
+        entries.set(id, { id, token: variable.value, password: '' })
+      }
+    }
+  }
+  return [...entries.values()]
+}
+
+/**
+ * Every id the credential store is reconciled against.
+ *
+ * The environment half names only the **locked** variables. That is deliberately narrower
+ * than naming every keyed one so that taking a lock off would delete the credential:
+ * `lastKeep` already does that job, and for free — an unlocked-just-now variable was in
+ * the previous save's list, so the next save names it once more and Go deletes it. Naming
+ * them all instead would put one `keyring.Delete` per unlocked row into every save, a
+ * D-Bus round trip each on Linux, and would fire that whole pass whenever an *unlocked*
+ * key was retyped.
+ */
+const secretKeysOf = (documents: Record<string, RequestDocument>, tree: TreeNode[]) => [
+  ...Object.keys(documents),
+  ...collectionsIn(tree).flatMap(collection =>
+    collection.environments.flatMap(env =>
+      env.variables.filter(v => v.secret && v.key.trim()).map(v => environmentSecretKey(collection.id, env.id, v.key.trim())),
+    ),
+  ),
+]
+
 let secretsTimer: number | undefined
 let lastSecrets = ''
 /**
@@ -99,27 +165,63 @@ let secretsReadFailed = false
  * Credential Manager / Keychain, which is far more expensive than a file write and
  * has nothing to do with what was edited. The id list is part of the signature
  * because deleting a request also has to delete its entry.
+ *
+ * `tree` joined it when environments did, which means a folder expand recomputes this. The
+ * cost is one `JSON.stringify` over the secret set that then returns early on equality —
+ * strictly smaller than the whole-workspace `stringify` the same subscriber already does
+ * on that same transition.
  */
-const secretsSignature = (documents: Record<string, RequestDocument>) => JSON.stringify([secretsOf(documents), Object.keys(documents).sort()])
+const secretsSignature = (documents: Record<string, RequestDocument>, tree: TreeNode[]) =>
+  JSON.stringify([secretsOf(documents), environmentSecretsOf(tree), secretKeysOf(documents, tree).sort()])
 
-function scheduleSecrets(documents: Record<string, RequestDocument>) {
-  const signature = secretsSignature(documents)
+/**
+ * The write itself, split out so `flushSecrets` can run it without waiting.
+ *
+ * Holds the arguments of the pending write rather than reading the store, because the
+ * debounce exists to write what was there when it was scheduled — and `flushNow` must not
+ * turn a queued deletion into a write of some later state.
+ */
+let pendingSecrets: (() => void) | null = null
+
+function scheduleSecrets(documents: Record<string, RequestDocument>, tree: TreeNode[]) {
+  const signature = secretsSignature(documents, tree)
   if (signature === lastSecrets) return
   lastSecrets = signature
+
+  pendingSecrets = () => {
+    const live = secretKeysOf(documents, tree)
+    const keep = secretsReadFailed ? [] : [...new Set([...lastKeep, ...live])]
+    lastKeep = live
+    void WorkspaceService.SaveSecrets([...secretsOf(documents), ...environmentSecretsOf(tree)], keep).then(result => {
+      if (result.error) console.warn('[persistence] credential store:', result.error)
+      useAppStore.getState().setSecretsAvailable(result.available)
+    })
+  }
 
   if (secretsTimer !== undefined) clearTimeout(secretsTimer)
   // Slower than the workspace write: a credential store round trip is far more
   // expensive than a file write, and nothing reads these back until a restart.
-  secretsTimer = window.setTimeout(() => {
-    secretsTimer = undefined
-    const live = Object.keys(documents)
-    const keep = secretsReadFailed ? [] : [...new Set([...lastKeep, ...live])]
-    lastKeep = live
-    void WorkspaceService.SaveSecrets(secretsOf(documents), keep).then(result => {
-      if (result.error) console.warn('[persistence] credential store:', result.error)
-      useAppStore.getState().setSecretsAvailable(result.available)
-    })
-  }, 1200)
+  secretsTimer = window.setTimeout(flushSecrets, 1200)
+}
+
+/**
+ * Runs the pending credential write now, if there is one.
+ *
+ * Wired into `flushNow`, which used to flush the two file writers and leave this timer
+ * alone. That gap is not cosmetic: `SaveSecrets` is also what *deletes*, so quitting
+ * within the debounce of deleting a collection left every one of its variables' entries
+ * named by nothing — and `go-keyring` cannot enumerate a store, so an id nobody names is
+ * an id nobody can delete. The same hole existed for a deleted request's token; it is
+ * simply wider now that a collection can carry twenty credentials.
+ *
+ * Cheap when idle: with nothing queued there is no timer and no call.
+ */
+function flushSecrets(): void {
+  if (secretsTimer !== undefined) clearTimeout(secretsTimer)
+  secretsTimer = undefined
+  const run = pendingSecrets
+  pendingSecrets = null
+  run?.()
 }
 
 /**
@@ -144,8 +246,8 @@ function installAutosave(): void {
   let lastPrefs = JSON.stringify(toPrefsFile(useAppStore.getState()))
   // Seeded from the just-hydrated state, so the first edit to anything else does
   // not look like a credential change and rewrite the keychain for nothing.
-  lastSecrets = secretsSignature(useAppStore.getState().documents)
-  lastKeep = Object.keys(useAppStore.getState().documents)
+  lastSecrets = secretsSignature(useAppStore.getState().documents, useAppStore.getState().tree)
+  lastKeep = secretKeysOf(useAppStore.getState().documents, useAppStore.getState().tree)
 
   useAppStore.subscribe((state, prev) => {
     if (WORKSPACE_KEYS.some(key => state[key] !== prev[key])) {
@@ -158,7 +260,10 @@ function installAutosave(): void {
         lastWorkspace = next
         workspaceWriter.schedule(next)
       }
-      if (state.documents !== prev.documents) scheduleSecrets(state.documents)
+      // `tree` as well as `documents`, because a locked variable's value lives on a
+      // collection node. It is inside the `WORKSPACE_KEYS` branch, so a prefs-only change
+      // never reaches it.
+      if (state.documents !== prev.documents || state.tree !== prev.tree) scheduleSecrets(state.documents, state.tree)
     }
 
     const nextPrefs = JSON.stringify(toPrefsFile(state))
@@ -178,6 +283,7 @@ function installAutosave(): void {
 export function flushNow(): void {
   workspaceWriter.flush()
   prefsWriter.flush()
+  flushSecrets()
 }
 
 const withTimeout = <T,>(promise: Promise<T>, ms: number): Promise<T> =>
@@ -216,13 +322,53 @@ export async function hydrate(): Promise<void> {
     // Credentials come back from the OS store, keyed by request id, so a workspace
     // copied to another machine keeps its requests and simply has no tokens.
     const withAuth = Object.values(loaded.documents).filter(doc => doc.auth.type !== 'none')
+
+    // Locked variables ride along in the same call — one round trip on the startup path,
+    // which is why `LoadSecrets` takes a list at all. The key set is built from
+    // `environmentSecretKey` rather than by parsing an id back apart, so a document whose
+    // id was hand-edited to start with `env:` cannot claim a variable's value.
+    const variableKeys = new Set<string>()
+    for (const collection of collectionsIn(loaded.tree)) {
+      for (const env of collection.environments) {
+        for (const variable of env.variables) {
+          const key = variable.key.trim()
+          if (variable.secret && key) variableKeys.add(environmentSecretKey(collection.id, env.id, key))
+        }
+      }
+    }
+
     let secretsAvailable = false
-    if (withAuth.length) {
-      const result = await WorkspaceService.LoadSecrets(withAuth.map(doc => doc.id))
+    if (withAuth.length || variableKeys.size) {
+      const result = await WorkspaceService.LoadSecrets([...withAuth.map(doc => doc.id), ...variableKeys])
       secretsAvailable = result.available
+      const values = new Map<string, string>()
       for (const secret of result.secrets ?? []) {
+        // Variables first: those ids are ours and a document cannot shadow one.
+        if (variableKeys.has(secret.id)) {
+          values.set(secret.id, secret.token)
+          continue
+        }
         const doc = loaded.documents[secret.id]
         if (doc) loaded.documents[secret.id] = { ...doc, auth: { ...doc.auth, token: secret.token, password: secret.password } }
+      }
+      if (values.size) {
+        // A root-level `map`, not `mapTree`: collections are always roots, and rebuilding
+        // every node would leave nothing with a shared identity for `revealPatch` and the
+        // autosave guard to compare against.
+        loaded.tree = loaded.tree.map(node =>
+          node.type !== 'collection'
+            ? node
+            : {
+                ...node,
+                environments: node.environments.map(env => ({
+                  ...env,
+                  variables: env.variables.map(variable => {
+                    const stored = variable.secret ? values.get(environmentSecretKey(node.id, env.id, variable.key.trim())) : undefined
+                    return stored === undefined ? variable : { ...variable, value: stored }
+                  }),
+                })),
+              },
+        )
       }
       if (result.error) {
         // Not just noise: an entry that could not be read loaded empty, and the next
@@ -234,7 +380,14 @@ export async function hydrate(): Promise<void> {
       secretsAvailable = true
     }
 
-    // Transitional, and goes with `legacySecretKeys`: the environment variables feature
+    // Do not add `environmentSecretsOf`/`secretKeysOf` to this call. It is a one-shot
+    // sweep of the *old* key shape (`env:<environment id>:<variable key>`, three
+    // segments), and it is safe precisely because neither list below mentions an
+    // environment: it can delete nothing that is live. Naming the new four-segment keys in
+    // `keep` without also writing them in `entries` would clear every locked variable's
+    // credential on the first launch after an upgrade.
+    //
+    // Transitional, and goes with `legacySecretKeys`: the 0.31.0 environments feature
     // stored one credential per locked variable, nothing names them any more, and a
     // store that cannot be enumerated cannot be swept later. `SaveSecrets` deletes every
     // id in `keep` it was not asked to write — the same pass that clears a deleted

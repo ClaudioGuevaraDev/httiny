@@ -1,5 +1,6 @@
 import { HTTPService } from '../bindings/github.com/ClaudioGuevaraDev/httiny/internal/httpexec'
 import type { WireResult } from '../bindings/github.com/ClaudioGuevaraDev/httiny/internal/httpexec'
+import { resolveFor } from './environments'
 import { toRequestDTO } from './requestDTO'
 import { fromResult, snippetFor } from './snippets'
 import type { RequestDocument } from './types'
@@ -14,7 +15,7 @@ import type { RequestDocument } from './types'
  * Lives outside React because two callers need it and only one of them is a component —
  * the palette's "Copy as curl" runs from a command, with nowhere to hang a hook.
  */
-export const wireFor = (request: RequestDocument): Promise<WireResult> => HTTPService.Wire(toRequestDTO(request))
+export const wireFor = (request: RequestDocument): Promise<WireResult> => HTTPService.Wire(toRequestDTO(request, resolveFor(request.id)))
 
 /**
  * Puts one target's snippet on the clipboard without opening the code view.

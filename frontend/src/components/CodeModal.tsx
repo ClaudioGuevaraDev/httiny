@@ -6,6 +6,7 @@ import { errorCopy } from '../errors'
 import { useT } from '../language'
 import { SNIPPET_TARGETS, snippetFor, targetFor } from '../snippets'
 import { extensionsFor } from '../snippets/highlight'
+import { environmentFor, secretsIn } from '../environments'
 import { useAppStore } from '../store'
 import { useCopy } from '../useCopy'
 import { useWire } from '../useWire'
@@ -67,7 +68,25 @@ function CodeBody({ onDismiss }: { onDismiss: () => void }) {
   // Regenerating is cheap, but it happens on every keystroke in the URL bar *and* on every
   // unrelated store update the modal subscribes to. Memoising keeps CodeMirror from being
   // handed a new document when nothing about the request changed.
-  const code = useMemo(() => (wire.state === 'ready' ? snippetFor(target, wire.wire, redact) : ''), [wire, target, redact])
+  // The locked values of the environment applying to **this request**, so a secret
+  // substituted into a header the `SECRET_HEADERS` list has never heard of is still masked
+  // when the switch is on.
+  //
+  // Keyed by the request and not by "active", even though `CodeBody` only ever shows the
+  // active one: `useWire` resolves this snippet through `resolveFor(request.id)`, and the
+  // masks have to come from the environment that substituted the values. Keying them
+  // differently would make the agreement a coincidence maintained by two unrelated lines,
+  // and the failure mode when it broke would be a snippet with redaction on printing a
+  // token in full.
+  //
+  // A subscription rather than a `getState()` read, so editing a variable while this is
+  // open moves the masks with the snippet. `useMemo` on the found object's identity is
+  // sound: `setEnvironmentVariables` maps the edited environment to a new object, so
+  // identity moves exactly when the values do.
+  const environment = useAppStore(s => environmentFor(s, request?.id))
+  const secrets = useMemo(() => secretsIn(environment), [environment])
+
+  const code = useMemo(() => (wire.state === 'ready' ? snippetFor(target, wire.wire, redact, secrets) : ''), [wire, target, redact, secrets])
   const mode = targetFor(target).mode
 
   return (

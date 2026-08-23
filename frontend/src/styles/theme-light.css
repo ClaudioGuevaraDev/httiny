@@ -124,6 +124,14 @@
   --color-selection-match: #c7e4d3; /* … and above 4.5:1 on this one            */
   --color-bracket-match: #dff0e6;
 
+  /* ── Template variables ─────────────────────────────────────────────────── */
+  /* Same recipe as dark, inverted: the plate darkens the surface instead of lifting
+   * it. The unknown fill is --color-danger's own hex at 13%. */
+  --color-variable-fill: #0c0d1014; /*         plate #ececec on s1 · 16.45 · 13.31 on
+                                                selection · 12.19 on selection-match */
+  --color-variable-unknown-fill: #b8113921; /* plate #f6e0e5 on s1 · 15.48 · 12.57 on
+                                                selection · 11.52 on selection-match */
+
   /* ── Shadows ────────────────────────────────────────────────────────────── */
   /* The dark theme's near-opaque black would read as soot on a white panel. Light
    * elevation is a soft slate cast plus a hairline ring doing the separating. */

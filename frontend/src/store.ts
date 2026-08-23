@@ -7,6 +7,8 @@ import type {
   BodyView,
   CollectionNode,
   ConfirmIntent,
+  Environment,
+  EnvironmentVariable,
   HttpMethod,
   KeyValueRow,
   Locale,
@@ -197,6 +199,15 @@ interface AppState {
   paletteSeed: string
   /** Not persisted: an open modal is not a preference worth restoring. */
   settingsOpen: boolean
+  /**
+   * Which collection's environments the editor is open on, or `null` for closed.
+   *
+   * The id and not a boolean, so the dialog cannot drift onto another collection while it
+   * is open: the rail moves under it whenever a palette jump reveals a request elsewhere,
+   * and a dialog that followed would silently retarget every edit in it. Not persisted,
+   * for the reason `settingsOpen` gives.
+   */
+  environmentsFor: string | null
 
   /**
    * The code view, and only what something outside the modal reads: whether it is open,
@@ -305,9 +316,30 @@ interface AppState {
   reopenUpdate: () => void
   openSettings: () => void
   closeSettings: () => void
+  openEnvironments: (collectionId: string) => void
+  closeEnvironments: () => void
   openCode: () => void
   closeCode: () => void
   setCodeTarget: (target: SnippetTarget) => void
+  /**
+   * The six environment actions, every one of them taking the collection explicitly.
+   *
+   * Explicit and not read from `collectionInPlay` inside the action, which is what the
+   * workspace-global design did: there, the pool was shared and the pick was the only
+   * per-collection thing, so there was one right answer. Here everything is per
+   * collection, and a dialog opened for collection X has to keep writing to X even
+   * though the palette and Ctrl+Tab can move `activeId` under it.
+   *
+   * `addEnvironment` and `duplicateEnvironment` take the new id rather than minting one,
+   * so the caller has it to select the new environment with — the same reason `freshRow`
+   * mints outside the store.
+   */
+  addEnvironment: (collectionId: string, id: string, name?: string) => void
+  renameEnvironment: (collectionId: string, id: string, name: string) => void
+  duplicateEnvironment: (collectionId: string, id: string, nextId: string) => void
+  deleteEnvironment: (collectionId: string, id: string) => void
+  setEnvironmentVariables: (collectionId: string, id: string, variables: EnvironmentVariable[]) => void
+  setActiveEnvironment: (collectionId: string, id: string | null) => void
   askConfirm: (intent: ConfirmIntent) => void
   closeConfirm: () => void
   /**
@@ -326,6 +358,25 @@ const mapTree = (nodes: TreeNode[], fn: (node: TreeNode) => TreeNode): TreeNode[
 
 const removeNode = (nodes: TreeNode[], id: string): TreeNode[] =>
   nodes.filter(n => n.id !== id).map(n => (n.type === 'request' ? n : { ...n, children: removeNode(n.children, id) }))
+
+/**
+ * One collection, replaced.
+ *
+ * A flat `map` and not `mapTree`, for two reasons. A collection is always a root node —
+ * `addNode` forces it and `adopt` repairs it — so there is nothing to recurse into. And
+ * every other node has to keep its identity: `subscribeEnvironment` compares the
+ * resolved `Environment` object, which only survives because a copy of an untouched
+ * node is not made at all.
+ */
+const mapCollection = (nodes: TreeNode[], id: string, fn: (collection: CollectionNode) => CollectionNode): TreeNode[] =>
+  nodes.map(node => (node.type === 'collection' && node.id === id ? fn(node) : node))
+
+/** The same, narrowed to one environment inside it. A no-op when either id names nothing. */
+const mapEnvironment = (nodes: TreeNode[], collectionId: string, envId: string, fn: (env: Environment) => Environment): TreeNode[] =>
+  mapCollection(nodes, collectionId, collection => ({
+    ...collection,
+    environments: collection.environments.map(env => (env.id === envId ? fn(env) : env)),
+  }))
 
 const insertNode = (nodes: TreeNode[], parentId: string | undefined, child: TreeNode): TreeNode[] => {
   if (!parentId) return [...nodes, child]
@@ -471,6 +522,97 @@ const containerFor = (nodes: TreeNode[], selectedNodeId: string | null, activeCo
 /** Root-level collections, in order — exactly what the rail lists. */
 export const collectionsIn = (nodes: TreeNode[]): CollectionNode[] => nodes.filter((n): n is CollectionNode => n.type === 'collection')
 
+/**
+ * Exactly the state environment resolution reads.
+ *
+ * Named for the reason `WorkspaceState` is: `environments.ts` types itself against this,
+ * so a fourth field joining the resolution is a deliberate edit here rather than a silent
+ * widening at a call site. There is no `environments` member — the pool is inside `tree`,
+ * which is the whole point of the design.
+ */
+export type ResolutionState = Pick<AppState, 'tree' | 'activeId' | 'activeCollectionId'>
+
+/**
+ * Which collection each request belongs to, keyed by **document** id — the id `tabs`,
+ * `documents` and `responses` are keyed by, not the tree node id.
+ *
+ * The **node**, not its id: every caller wants `environments` off it, and returning the
+ * id would make each one walk the tree a second time. One walk for the whole tree rather
+ * than one per question, because the callers ask about the active request on every store
+ * change. A request loose at the root belongs to no collection and is simply absent —
+ * `adopt` prevents that shape on load and nothing in the app can create it.
+ */
+const requestOwners = (nodes: TreeNode[]): Map<string, CollectionNode> => {
+  const out = new Map<string, CollectionNode>()
+  for (const node of nodes) {
+    if (node.type !== 'collection') continue
+    for (const requestId of requestIdsIn(node)) out.set(requestId, node)
+  }
+  return out
+}
+
+/**
+ * The same, cached on `tree` identity.
+ *
+ * Cache-on-read, and keyed on the tree it is *handed* rather than on the one in the store,
+ * for two reasons. Hydration replaces `tree` before `createRoot`, so a map built at module
+ * load would already be stale by the first render with nothing to correct it. And the
+ * subscription guard asks the same question of `state` and of `previous`; a cache that
+ * read `getState()` would answer both with the current tree.
+ *
+ * Identity is a sound key because nothing mutates a `TreeNode` in place: `mapTree`,
+ * `insertNode`, `removeNode` and `mapCollection` are all copy-on-write. `toggleNode`
+ * therefore rebuilds this on every folder expand — harmless precisely because the guard
+ * compares the resolved `Environment`, and that object survives the copy.
+ */
+let ownerTree: TreeNode[] | null = null
+let owners: ReadonlyMap<string, CollectionNode> = new Map()
+const ownersOf = (tree: TreeNode[]): ReadonlyMap<string, CollectionNode> => {
+  if (ownerTree !== tree) {
+    ownerTree = tree
+    owners = requestOwners(tree)
+  }
+  return owners
+}
+
+/** The collection a request lives in, or null when it is not in the tree. */
+export const collectionOf = (state: ResolutionState, requestId: string): CollectionNode | null => ownersOf(state.tree).get(requestId) ?? null
+
+/**
+ * Which collection the sidebar is *showing* — not the same as `activeCollectionId`.
+ *
+ * `CollectionRail`, `Sidebar`, `useTreeNavigation` and `readPrefs` each fall back to
+ * `collections[0]` on their own, so `activeCollectionId` can be null or stale while the
+ * rail visibly shows a collection. Anything asking "which collection is the user looking
+ * at" has to ask the same way they do.
+ */
+export const shownCollection = (state: Pick<ResolutionState, 'tree' | 'activeCollectionId'>): CollectionNode | null => {
+  const collections = collectionsIn(state.tree)
+  return collections.find(c => c.id === state.activeCollectionId) ?? collections[0] ?? null
+}
+
+/**
+ * The collection whose environments the *interface* is pointed at: the active request's,
+ * else the rail's.
+ *
+ * The fallback is what separates this from `environmentFor`, which has none. This answers
+ * "which collection does a control act on"; that one answers "which environment does this
+ * send resolve against", and borrowing the rail there would point a send at another
+ * server's credentials.
+ */
+export const collectionInPlay = (state: ResolutionState): CollectionNode | null =>
+  (state.activeId ? collectionOf(state, state.activeId) : null) ?? shownCollection(state)
+
+/**
+ * A collection's active environment, or undefined.
+ *
+ * Validated rather than trusted, even though `deleteEnvironment` and `readTree` both
+ * prune: a `Select` whose `value` matches no option renders blank, so a stale id has to
+ * read as "none" here too.
+ */
+export const activeEnvironmentOf = (collection: CollectionNode | null): Environment | undefined =>
+  collection?.environments.find(env => env.id === collection.activeEnvironmentId)
+
 export const useAppStore = create<AppState>((set, get) => ({
   // The app starts genuinely empty. There are no fixtures to seed from any more:
   // demo data against a domain that does not exist made every surface look
@@ -495,6 +637,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   paletteOpen: false,
   paletteSeed: '',
   settingsOpen: false,
+  environmentsFor: null,
   codeOpen: false,
   codeTarget: DEFAULT_SNIPPET_TARGET,
   confirm: null,
@@ -578,7 +721,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       let activeCollectionId = s.activeCollectionId
       if (type !== 'collection' && !parentId && !collectionsIn(tree).length) {
         activeCollectionId = `collection-${stamp}`
-        tree = [...tree, { id: activeCollectionId, type: 'collection', name: translate('data.myCollection'), expanded: true, children: [] }]
+        tree = [...tree, { id: activeCollectionId, type: 'collection', name: translate('data.myCollection'), expanded: true, children: [], environments: [], activeEnvironmentId: null }]
       }
 
       const parent = parentId ?? containerFor(tree, s.selectedNodeId, activeCollectionId)
@@ -626,13 +769,12 @@ export const useAppStore = create<AppState>((set, get) => ({
         }
       }
       const id = `${type}-${stamp}`
-      const child: TreeNode = {
-        id,
-        type,
-        name: name?.trim() || translate(type === 'collection' ? 'data.newCollection' : 'data.newFolder'),
-        expanded: true,
-        children: [],
-      }
+      // Two literals where there used to be one. Only a collection carries environments,
+      // and spelling both out is what makes a folder that carries them unrepresentable
+      // rather than merely unwritten — the same split `StoredNode` now makes on disk.
+      const shared = { id, name: name?.trim() || translate(type === 'collection' ? 'data.newCollection' : 'data.newFolder'), expanded: true, children: [] }
+      const child: TreeNode =
+        type === 'collection' ? { ...shared, type: 'collection', environments: [], activeEnvironmentId: null } : { ...shared, type: 'folder' }
       return {
         // A collection is always a root node, whatever happens to be selected —
         // nesting one inside a folder would hide it from the rail.
@@ -770,9 +912,78 @@ export const useAppStore = create<AppState>((set, get) => ({
   reopenUpdate: () => set({ updateDismissed: false }),
   openSettings: () => set({ settingsOpen: true }),
   closeSettings: () => set({ settingsOpen: false }),
+  openEnvironments: collectionId => set({ environmentsFor: collectionId }),
+  closeEnvironments: () => set({ environmentsFor: null }),
   openCode: () => set({ codeOpen: true }),
   closeCode: () => set({ codeOpen: false }),
   setCodeTarget: codeTarget => set({ codeTarget }),
+  addEnvironment: (collectionId, id, name) =>
+    set(s => ({
+      tree: mapCollection(s.tree, collectionId, collection => ({
+        ...collection,
+        // A blank variable comes with it: never a bare column header, the rule
+        // `readFormRows` and `parseParams` both state.
+        environments: [...collection.environments, { id, name: name?.trim() || translate('data.newEnvironment'), variables: [freshVariable()] }],
+      })),
+    })),
+
+  renameEnvironment: (collectionId, id, name) => set(s => ({ tree: mapEnvironment(s.tree, collectionId, id, env => ({ ...env, name })) })),
+
+  /**
+   * Rows get fresh ids: the copy is a different environment, and two grids sharing a
+   * React key would destroy and rebuild an editor across the switch.
+   *
+   * Locked values are whatever is in memory. With a reachable credential store those are
+   * the real ones and the next save writes fresh entries under the new id; without one
+   * they are empty, and the copy is honest about it.
+   */
+  duplicateEnvironment: (collectionId, id, nextId) =>
+    set(s => ({
+      tree: mapCollection(s.tree, collectionId, collection => {
+        const source = collection.environments.find(env => env.id === id)
+        if (!source) return collection
+        const copy: Environment = {
+          id: nextId,
+          name: translate('data.copyOf', { name: source.name }),
+          variables: source.variables.map(variable => ({ ...variable, id: crypto.randomUUID() })),
+        }
+        return { ...collection, environments: [...collection.environments, copy] }
+      }),
+    })),
+
+  /**
+   * The pick falls to *none*, never to the next survivor — the opposite of what
+   * `deleteNode` does with collections, and deliberately so. A collection is a place to
+   * look, so promoting one costs nothing. An environment is a host and a set of
+   * credentials, and promoting one would send the next request somewhere never chosen.
+   * `readTree` applies the same rule to a stale id on disk.
+   *
+   * Nothing is pruned from the credential store here. The departed keys were in the
+   * previous save's `keep` list, so the next save names them once more and Go deletes
+   * them — the mechanism a deleted request's token already rides on.
+   */
+  deleteEnvironment: (collectionId, id) =>
+    set(s => ({
+      tree: mapCollection(s.tree, collectionId, collection => ({
+        ...collection,
+        environments: collection.environments.filter(env => env.id !== id),
+        activeEnvironmentId: collection.activeEnvironmentId === id ? null : collection.activeEnvironmentId,
+      })),
+    })),
+
+  setEnvironmentVariables: (collectionId, id, variables) => set(s => ({ tree: mapEnvironment(s.tree, collectionId, id, env => ({ ...env, variables })) })),
+
+  // Validated against the collection's own list rather than trusted, so no call site can
+  // point a collection at an environment belonging to another one. `null` is a real value
+  // and not an absence: the field exists whether or not anything is picked.
+  setActiveEnvironment: (collectionId, id) =>
+    set(s => ({
+      tree: mapCollection(s.tree, collectionId, collection => ({
+        ...collection,
+        activeEnvironmentId: id && collection.environments.some(env => env.id === id) ? id : null,
+      })),
+    })),
+
   askConfirm: confirm => set({ confirm }),
   closeConfirm: () => set({ confirm: null }),
   runConfirm: () => {
@@ -785,6 +996,9 @@ export const useAppStore = create<AppState>((set, get) => ({
     switch (intent.kind) {
       case 'deleteNode':
         get().deleteNode(intent.nodeId)
+        return
+      case 'deleteEnvironment':
+        get().deleteEnvironment(intent.collectionId, intent.environmentId)
         return
       case 'resetSettings':
         get().resetSettings()
@@ -805,6 +1019,10 @@ export const useAppStore = create<AppState>((set, get) => ({
  * disagree about where the query starts. `replaceQuery` writes rows into a URL and
  * `parseParams` reads them back out; both go through here.
  *
+ * `replaceQuery` itself lives in `template.ts`, which imports this — the encoder has to
+ * sit beside `resolveUrl`, the decoder it must agree with, and the dependency only runs
+ * one way. Do not import from `template.ts` here: that closes the cycle.
+ *
  * The fragment wins: `?a=1` after a `#` is part of the fragment, not the query.
  */
 export const splitUrl = (url: string): { base: string; query: string; hash: string } => {
@@ -815,20 +1033,22 @@ export const splitUrl = (url: string): { base: string; query: string; hash: stri
   return queryAt >= 0 ? { base: clean.slice(0, queryAt), query: clean.slice(queryAt + 1), hash } : { base: clean, query: '', hash }
 }
 
-export const replaceQuery = (url: string, rows: KeyValueRow[]) => {
-  const { base, hash } = splitUrl(url)
-  const query = rows
-    .filter(r => r.enabled && r.key.trim())
-    .map(r => `${encodeURIComponent(r.key)}=${encodeURIComponent(r.value)}`)
-    .join('&')
-  return `${base}${query ? `?${query}` : ''}${hash}`
-}
-
 /**
  * A blank grid row. Here rather than beside the grid that renders one, because a file
  * that exports both a component and a helper breaks Fast Refresh for everything
  * importing it.
  */
 export const freshRow = (): KeyValueRow => ({ id: crypto.randomUUID(), enabled: true, key: '', value: '', description: '' })
+
+/**
+ * A blank environment variable. `freshRow`'s neighbour, for the same Fast Refresh reason.
+ *
+ * A UUID and not `env-${Date.now()}`: `addNode` already carries a comment about
+ * `node-${Date.now()}` and `request-${Date.now()}` colliding in the same tick, and
+ * `duplicateEnvironment` mints a second id in the same gesture as the first. The same
+ * applies to the environment ids the dialog mints — a collision there would alias two
+ * credentials, and a UUID kills the class without a uniqueness check anywhere.
+ */
+export const freshVariable = (): EnvironmentVariable => ({ id: crypto.randomUUID(), enabled: true, key: '', value: '', secret: false })
 
 export const methodOptions: HttpMethod[] = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD', 'OPTIONS']

@@ -3,6 +3,7 @@ import { PanelLeftClose, PanelLeftOpen } from 'lucide-react'
 import { CommandPalette } from './components/CommandPalette'
 import { CodeModal } from './components/CodeModal'
 import { ConfirmDialog } from './components/ConfirmDialog'
+import { EnvironmentsDialog } from './components/EnvironmentsDialog'
 import { SettingsModal } from './components/SettingsModal'
 import { UpdateModal } from './components/UpdateModal'
 import { RequestEditor } from './components/RequestEditor'
@@ -116,6 +117,7 @@ export function App() {
       </main>
       <CommandPalette />
       <SettingsModal />
+      <EnvironmentsDialog />
       <CodeModal />
       <UpdateModal />
       {/* Last, though the order is only tidiness: a modal's stacking follows its

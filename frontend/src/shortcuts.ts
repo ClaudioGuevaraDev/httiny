@@ -14,6 +14,10 @@ export const shortcuts = {
   toggleSidebar: ['Ctrl', 'B'],
   toggleSplit: ['Ctrl', '\\'],
   settings: ['Ctrl', ','],
+  // Free against CodeMirror's default keymap and against WebView2, which has no address
+  // bar for Ctrl+E to open. It acts on the collection the sidebar is showing, which is
+  // the only collection whose environments are on screen to begin with.
+  environments: ['Ctrl', 'E'],
   // Not Ctrl+/ and not Ctrl+Shift+C, which both look more mnemonic and are both taken:
   // the first is `toggleComment` in CodeMirror's default keymap, so it belongs to the body
   // editor, and the second opens the webview's element inspector.

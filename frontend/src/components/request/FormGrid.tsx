@@ -5,6 +5,7 @@ import { useT } from '../../language'
 import { useAppStore } from '../../store'
 import { PART_KINDS, type FormRow, type PartKind, type RequestDocument } from '../../types'
 import { Select } from '../Select'
+import { TemplateInput } from '../TemplateInput'
 import { FileChip } from './FileChip'
 
 const freshFormRow = (kind: PartKind, path = ''): FormRow => ({
@@ -93,28 +94,27 @@ export function FormGrid({ request }: { request: RequestDocument }) {
             options={PART_KINDS.map(kind => ({ value: kind, label: t(KIND_LABEL[kind]) }))}
             onChange={kind => commit(rows.map(r => (r.id === row.id ? { ...r, kind } : r)))}
           />
-          <input
-            className="technical-input"
+          {/* Both the part name and a text part's value are resolved on the way to the
+              wire, so both mark their variables. The content type below is not — an
+              empty one already means "derive it", which no substitution can express —
+              and a file row's path is a path rather than a template, for the reasons
+              `requestDTO.ts` gives beside each. */}
+          <TemplateInput
+            variant="cell"
             value={row.key}
-            name="form-key"
-            aria-label={t('editor.kv.key')}
+            ariaLabel={t('editor.kv.key')}
             placeholder={t('editor.kv.keyPlaceholder')}
-            autoComplete="off"
-            spellCheck={false}
-            onChange={e => commit(rows.map(r => (r.id === row.id ? { ...r, key: e.target.value } : r)))}
+            onChange={next => commit(rows.map(r => (r.id === row.id ? { ...r, key: next } : r)))}
           />
           {row.kind === 'file' ? (
             <FileChip path={row.path} attachment={attachments[row.path]} onPick={path => commit(rows.map(r => (r.id === row.id ? { ...r, path } : r)))} />
           ) : (
-            <input
-              className="technical-input"
+            <TemplateInput
+              variant="cell"
               value={row.value}
-              name="form-value"
-              aria-label={t('editor.kv.value')}
+              ariaLabel={t('editor.kv.value')}
               placeholder={t('editor.kv.valuePlaceholder')}
-              autoComplete="off"
-              spellCheck={false}
-              onChange={e => commit(rows.map(r => (r.id === row.id ? { ...r, value: e.target.value } : r)))}
+              onChange={next => commit(rows.map(r => (r.id === row.id ? { ...r, value: next } : r)))}
             />
           )}
           <input

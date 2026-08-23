@@ -67,4 +67,5 @@ export const targetFor = (id: SnippetTarget) => SNIPPET_TARGETS.find(target => t
  * The one entry point. Redaction happens here rather than inside each generator, so a
  * generator cannot forget to ask and there is exactly one definition of what a secret is.
  */
-export const snippetFor = (id: SnippetTarget, wire: Wire, redact: boolean): string => targetFor(id).generate(redact ? redactWire(wire) : wire)
+export const snippetFor = (id: SnippetTarget, wire: Wire, redact: boolean, secrets?: ReadonlyMap<string, string>): string =>
+  targetFor(id).generate(redact ? redactWire(wire, secrets) : wire)

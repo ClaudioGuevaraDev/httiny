@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react'
-import { ArrowUp, Boxes, ChevronDown, ChevronRight, Folder, Search } from 'lucide-react'
+import { ArrowUp, Boxes, ChevronDown, ChevronRight, Folder } from 'lucide-react'
 import { useT } from '../language'
 import type { VisibleRow } from '../store'
 import { collectionsIn, useAppStore } from '../store'
@@ -7,9 +7,10 @@ import type { CollectionNode } from '../types'
 import { useTreeNavigation } from '../useTreeNavigation'
 import { shortcuts } from '../shortcuts'
 import { COLLECTION_PANEL_ID, collectionTabId } from '../collections'
+import { EnvironmentPicker } from './EnvironmentPicker'
 import { CollectionRail } from './CollectionRail'
 import { MethodChip } from './MethodChip'
-import { Placeholder, PlaceholderAction, Shortcut } from './Placeholder'
+import { Placeholder, PlaceholderAction } from './Placeholder'
 import { TreeRowActions } from './TreeRowActions'
 
 /**
@@ -216,7 +217,6 @@ function CollectionHeading({ collection }: { collection: CollectionNode }) {
 export function Sidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle: () => void }) {
   const { t } = useT()
   const addNode = useAppStore(s => s.addNode)
-  const openPalette = useAppStore(s => s.openPalette)
   const tree = useAppStore(s => s.tree)
   const activeCollectionId = useAppStore(s => s.activeCollectionId)
   const { containerRef, rows, activeId, onKeyDown, focusRow } = useTreeNavigation()
@@ -242,18 +242,12 @@ export function Sidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle:
           aria-labelledby={collection ? collectionTabId(collection.id) : undefined}
         >
           {collection && <CollectionHeading collection={collection} />}
-          {/*
-            This was an in-tree filter, but it only ever matched direct children, so
-            searching for a request nested two levels deep emptied the entire tree. It
-            now opens the command palette, which searches every request by name, method
-            and URL, and reveals the match in place instead of collapsing everything
-            around it.
-          */}
-          <button type="button" className="search-trigger" onClick={() => openPalette('')}>
-            <Search size={13} aria-hidden="true" />
-            <span>{t('sidebar.search')}</span>
-            <Shortcut keys={shortcuts.palette} />
-          </button>
+          {/* Under the collection's name rather than in the tab strip, which is where the
+              workspace-global version of this lived. The tab strip is not scoped — it can
+              hold requests from four collections at once — so a picker there had to carry a
+              label saying which collection it really acted on. Here the panel is the
+              scope. */}
+          {collection && <EnvironmentPicker collection={collection} />}
           {/* Two empty states, not one: with the tree scoped to a collection, "no
               rows" no longer means "nothing exists" — it usually means this
               collection is empty, which needs a different way out. */}

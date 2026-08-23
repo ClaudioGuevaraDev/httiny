@@ -139,6 +139,32 @@
   --color-selection-match: #24402f;
   --color-bracket-match: #26312a;
 
+  /* ── Template variables ─────────────────────────────────────────────────── */
+  /* A chip, not a fifth syntax hue: there is no hue left. Key is cyan, string is
+   * green — and green is also the accent, the selection band and OK/2xx — number is
+   * orange, literal is violet, and red is --color-danger, DELETE and tags.invalid.
+   * The most common case of all is a `{{var}}` inside a JSON string, drawn *on top
+   * of* that green, and a plate under the token needs no hue of its own to stay
+   * readable there.
+   *
+   * Both fills are translucent so a selected chip still reads as selected, and the
+   * mechanism differs by surface. In the body editor and the response viewer
+   * `basicSetup` brings `drawSelection`, which paints its band below `.cm-content`,
+   * so an opaque mark would cover it — those are the surfaces the two selection
+   * columns below are measured against. A one-line `TemplateInput` has no such
+   * layer: its band is the browser's native `::selection`, painted above the
+   * element's own background, which is a case there is no way to measure here.
+   * Translucent is the right answer to both. The text stays --color-text-strong in
+   * either state — a red foreground would collide with tags.invalid, which *is*
+   * --color-danger, and the misspelt name is the thing you have to be able to read.
+   *
+   * The edges are --color-border-control (already measured above, and its documented
+   * job is exactly this: bounding a control at 3:1) and --color-border-danger. */
+  --color-variable-fill: #ffffff1f; /*         plate #2b2b2e on s1 · 12.81 · 7.51 on
+                                                selection · 7.16 on selection-match  */
+  --color-variable-unknown-fill: #fb71852e; /* plate #392026 on s1 · 13.61 · 8.67 on
+                                                selection · 8.26 on selection-match  */
+
   /* ── Type scale ─────────────────────────────────────────────────────────── */
   /* Compact, with an 11px floor. The one documented exception is the DELETE and
    * OPTIONS method chips at 10px: those are all-caps mono abbreviations, where

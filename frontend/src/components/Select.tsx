@@ -378,6 +378,17 @@ export function Select<T extends string>({
            relationship is declarative and the keyboard path below has to be stopped too. */
         popoverTarget={disabled ? undefined : popoverId}
         popoverTargetAction="toggle"
+        /* Seeds the highlight, and opens nothing — so the rule above still holds.
+           `openPopover` is the only thing that seeds `active`, and all four of its callers
+           are in `onKeyDown`; a pointer open goes straight through `popoverTarget` and never
+           reaches it, so `active` stayed at its initial 0 and every menu opened with the
+           *first* row highlighted instead of the selected one.
+           Not in the popover's `beforetoggle` handler, which looks like the natural home:
+           that event is dispatched synchronously inside `showPopover()`, so its `setActive`
+           would queue after the one `openPopover` had just made and clobber the seeding
+           Home, End and type-ahead depend on. A click cannot collide with them — the
+           keyboard path calls `preventDefault()` on Enter and Space, so no click follows. */
+        onClick={disabled ? undefined : () => setActive(selectedIndex < 0 ? 0 : selectedIndex)}
         onKeyDown={disabled ? undefined : onKeyDown}
       >
         <span className="select-value">{selected?.glyph ?? selected?.label}</span>

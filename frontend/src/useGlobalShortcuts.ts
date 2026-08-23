@@ -4,6 +4,7 @@ import { flushNow } from './persistence'
 import { cancelRequest, toggleRequest } from './requestRunner'
 import { matchesCombo } from './shortcuts'
 import { useAppStore } from './store'
+import { shownCollection } from './store'
 import { isUpdateModalOpen } from './types'
 
 /**
@@ -37,6 +38,19 @@ export function useGlobalShortcuts(): void {
         event.preventDefault()
         if (state.settingsOpen) state.closeSettings()
         else state.openSettings()
+        return
+      }
+
+      if (matchesCombo(event, 'mod+e')) {
+        event.preventDefault()
+        // The collection the rail is *showing*, which is what `shownCollection` answers and
+        // `activeCollectionId` does not: that field can be null or stale while a collection
+        // is plainly on screen. With no collections at all there is nothing to manage.
+        if (state.environmentsFor) state.closeEnvironments()
+        else {
+          const collection = shownCollection(state)
+          if (collection) state.openEnvironments(collection.id)
+        }
         return
       }
 
@@ -80,7 +94,15 @@ export function useGlobalShortcuts(): void {
       // A pending confirmation counts too, for the same reason the update modal does:
       // Ctrl+Enter would otherwise fire a request from behind a dialog asking whether to
       // delete it, and Escape would abort an in-flight send on its way to dismissing it.
-      if (state.confirm || state.paletteOpen || state.settingsOpen || state.codeOpen || isUpdateModalOpen(state.update, state.updateDismissed)) return
+      if (
+        state.confirm ||
+        state.paletteOpen ||
+        state.settingsOpen ||
+        state.codeOpen ||
+        state.environmentsFor ||
+        isUpdateModalOpen(state.update, state.updateDismissed)
+      )
+        return
 
       const id = state.activeId
 

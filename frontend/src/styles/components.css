@@ -71,8 +71,10 @@
    *
    * Rings drawn some other way are not here and must not be added: `.tree-row` and
    * `.split-handle` set their own offsets, and the key/value cells swap the outline
-   * for an inset shadow. */
-  .url-input:focus-visible,
+   * for an inset shadow — as does `.template-input`'s cell variant, while its `url`
+   * variant is in this group; it draws the same bordered box the URL `<input>` did
+   * before the field became a one-line editor. */
+  .template-input.url:focus-within,
   .bar-btn:focus-visible,
   .add-row:focus-visible,
   .tree-rename:focus-visible,
@@ -80,6 +82,97 @@
   .select-trigger[data-variant='field']:focus-visible,
   .select-trigger[data-variant='method']:focus-visible {
     outline-offset: calc(var(--focus-ring-width) * -1);
+  }
+
+  /* ── Template input ────────────────────────────────────────────────────────── */
+  /* One class, two geometries, and no CodeMirror knowledge duplicated: `inputTheme` in
+   * `editorTheme.ts` reads `--ti-line` and `--ti-pad` and nothing else, and every box
+   * property is here beside the request-bar and `.technical-input` rules it has to agree
+   * with.
+   *
+   * In Shared primitives rather than at either of the two positions this class appears
+   * in, because it appears in *both* — the request bar and the key/value grid — and both
+   * of those later sections have to be able to override it on source order. Same
+   * argument `.icon-btn` makes for `.panel-toggle` and `.bar-btn`.
+   *
+   * `pre` and `hidden` on the static state to match `.cm-content` exactly — an `<input>`
+   * clips and never ellipsises — and the horizontal padding lives here, in one place,
+   * because the static line and the live `.cm-line` occupy the same box and any
+   * disagreement shows up as text jumping sideways on the first click. */
+  .template-input {
+    /* Three properties where there used to be one, and the split is the fix for a
+     * selection band that ran flush against the border.
+     *
+     * `--ti-box` is the field's content height and is what `--ti-line` used to be.
+     * `--ti-line` is now the *text's* line box — 1.5× the font size, which is exactly
+     * what the `<input>` in the description column inherits from Tailwind's preflight,
+     * so two neighbouring cells finally agree about how tall a selection is. A native
+     * `::selection` accepts no padding, no radius and no inset, so shrinking the line
+     * box is the only way to inset the band. `--ti-pad` is the slack, split evenly.
+     *
+     * Written as calcs against the same tokens the neighbouring rules use rather than as
+     * literals, so a change of row or control height cannot leave the text off-centre. */
+    --ti-box: calc(var(--h-row-kv) - 1px); /* `.kv-row` draws the 1px bottom border */
+    --ti-line: calc(var(--text-xs) * 1.5);
+    --ti-pad: calc((var(--ti-box) - var(--ti-line)) / 2);
+    min-width: 0;
+    height: 100%;
+    padding: 0 9px;
+    border-radius: var(--radius-xs);
+    color: var(--color-text);
+    font-family: var(--font-mono);
+    font-size: var(--text-xs);
+    overflow: hidden;
+    white-space: pre;
+    /* Exactly one child either way — `.template-line` while static, `.cm-editor` once
+     * mounted — so there are no anonymous flex items to split the chips and the text
+     * runs between them. That is what the static render's wrapper span is for. */
+    display: flex;
+    align-items: center;
+  }
+
+  /* The static line, centred by the flex parent above. Its line height and the mounted
+   * editor's come from the same property, so the text does not shift vertically the
+   * first time a cell is clicked. */
+  .template-line {
+    min-width: 0;
+    line-height: var(--ti-line);
+  }
+
+  /* The same argument `.technical-input:focus-visible` makes: these cells sit inside
+   * `.request-panel { overflow: auto }`, so a positive `outline-offset` is clipped on
+   * the first and last column and the ring vanishes. Drawn inside instead.
+   *
+   * `:focus-within` and not `:focus-visible`, because the element that takes focus is
+   * `.cm-content`, a descendant — the construction `.response-search-field` already
+   * uses. Nothing is lost: for a text field `:focus-visible` matches on click anyway. */
+  .template-input:focus-within {
+    outline: none;
+    box-shadow: inset 0 0 0 var(--focus-ring-width) var(--color-focus);
+  }
+
+  .template-input.url {
+    --ti-box: calc(var(--h-control-lg) - 2px); /* its own 1px border, top and bottom */
+    --ti-line: calc(var(--text-sm) * 1.5);
+    flex: 1;
+    height: var(--h-control-lg);
+    padding: 0 11px;
+    border: 1px solid var(--color-border-control);
+    border-radius: var(--radius-md);
+    background: var(--color-surface-3);
+    font-size: var(--text-sm);
+  }
+
+  /* The URL variant draws a border, so it takes the outline pulled onto that border —
+   * the group above — rather than the cell's inset shadow. */
+  .template-input.url:focus-within {
+    box-shadow: none;
+    outline: var(--focus-ring-width) solid var(--color-focus);
+    border-color: var(--color-border-control);
+  }
+
+  .template-hint {
+    color: var(--color-text-faint);
   }
 
   .icon-btn.xs {
@@ -898,10 +991,11 @@
   }
 
   /* `align-items: center` is load-bearing, not tidying. Flex defaults to `stretch`, and
-   * `.url-input` was the one child of this row with no height of its own — so it took the
+   * the URL field was the one child of this row with no height of its own — so it took the
    * bar's content box (56px less 9px of padding top and bottom = 38px) and sat 2px taller
    * than the method picker, Send and the code button, which all declare 36px. The height of
-   * a control should not fall out of its container's padding. */
+   * a control should not fall out of its container's padding. `.template-input.url` now
+   * declares 36px like the rest, but the rule still holds for whatever lands here next. */
   .request-bar {
     height: var(--h-request-bar);
     padding: 9px 12px;
@@ -909,26 +1003,6 @@
     align-items: center;
     gap: 7px;
     border-bottom: 1px solid var(--color-border-subtle);
-  }
-
-  .url-input {
-    flex: 1;
-    min-width: 0;
-    /* Declared, like every other control in the row, rather than inherited from the bar. */
-    height: var(--h-control-lg);
-    padding: 0 11px;
-    border: 1px solid var(--color-border-control);
-    border-radius: var(--radius-md);
-    background: var(--color-surface-3);
-    color: var(--color-text);
-    font-family: var(--font-mono);
-    font-size: var(--text-sm);
-  }
-
-  /* The URL field takes the shared ring from the base layer; it only needs its
-   * border lifted so the control still reads as focused at a glance. */
-  .url-input:focus-visible {
-    border-color: var(--color-border-control);
   }
 
   /* The icon buttons in the request bar. It was `.save-btn` while Save owned it, which
@@ -1247,6 +1321,112 @@
   .form-grid .kv-row .select-trigger:focus-visible {
     outline: none;
     box-shadow: inset 0 0 0 var(--focus-ring-width) var(--color-focus);
+  }
+
+  /* ── Environment variable grid ─────────────────────────────────────────── */
+  /* Beside the other override of the key/value template on purpose: anyone changing the
+   * base grid should see every column count that depends on it in one screen. Five columns,
+   * and the fourth is a lock rather than a description — which is why there *is* a
+   * container-query branch below: the column the base rule hides at 560px is the one this
+   * grid can least afford to lose.
+   *
+   * The two action columns are `--h-control-md` and not the `--h-control-xs` the base grid
+   * gives its single one, and that is a fix rather than padding for its own sake. An
+   * `.icon-btn.xs` is exactly 24px, so in a 24px column it filled the cell edge to edge —
+   * and every cell but the last draws a `border-right`, so the lock's hover plate started
+   * flush against the value field's divider and the lock sat boxed between two lines. 32px
+   * with the `margin: auto` below leaves 4px of air each side: 4px to that divider, 8px
+   * between the two glyphs.
+   *
+   * The base grid never showed this because its one action is Delete — last cell, so no
+   * divider, and `opacity: 0` until the row is hovered. `.row-check` has the same problem in
+   * column 1 and dodges it another way, by drawing a 16px `::before` inside its 24px hit
+   * area. */
+  .var-grid .kv-header,
+  .var-grid .kv-row {
+    grid-template-columns: var(--h-control-xs) minmax(0, 1fr) minmax(0, 1.4fr) var(--h-control-md) var(--h-control-md);
+  }
+
+  /* `.row-check`'s idiom, two columns over: the hit area is the cell, the visible box is
+   * centred inside it. */
+  .var-grid .row-secret,
+  .var-grid .row-delete {
+    margin: auto;
+  }
+
+  /* No divider between the two actions — they are one group, not two data columns. The
+   * header loses it too, or a stub of line would hang over a row that has none. */
+  .var-grid .kv-header > :nth-child(4),
+  .var-grid .kv-row > :nth-child(4) {
+    border-right: 0;
+  }
+
+  /* Flush with the grid above it. The base rule's `margin: 7px 9px` left it inset by 9px
+   * while everything else in `.env-panel` — the name field, the header row, every cell —
+   * starts at the content edge. Scoped rather than fixed at the source: `.request-panel`
+   * has no horizontal padding, so a flush button there would touch the panel walls. */
+  .var-grid .add-row {
+    margin-left: 0;
+    margin-right: 0;
+  }
+
+  @container (max-width: 560px) {
+    /* The base rule hides column 4, which here is the lock. It is the one column that
+     * cannot be dropped: it says where the value is stored.
+     *
+     * `inline-flex` and **not `revert`**, which is what `.form-grid` above uses for the
+     * same job. `revert` discards every *author* declaration and falls back to the
+     * user-agent value, not just the `display: none` being undone — and column 4 here is
+     * a `<button class="icon-btn">`, whose `display: inline-flex` (with its centred
+     * `align-items` and `justify-content`) is an author declaration. Reverting took those
+     * with it and dropped the glyph onto the text baseline, visibly off-centre. It is
+     * harmless in `.form-grid` only because that column holds an `<input>`, whose UA
+     * `display` is already what the author asked for.
+     *
+     * This branch is always active inside the environments dialog, which is what made it
+     * a bug people see rather than a latent one: the plate is 760px, the nav column 196px
+     * and `.env-panel` adds 40px of padding, so the `.kv-wrap` container measures ~524px. */
+    .var-grid .kv-header > :nth-child(4),
+    .var-grid .kv-row > :nth-child(4) {
+      display: inline-flex;
+    }
+
+    .var-grid .kv-header,
+    .var-grid .kv-row {
+      grid-template-columns: var(--h-control-xs) minmax(0, 1fr) minmax(0, 1.4fr) var(--h-control-md) var(--h-control-md);
+    }
+  }
+
+  /* Both icons are always visible in this grid, at the same resting colour, so the pair
+   * reads as one group.
+   *
+   * The lock has to be: it is state, not an action, and a row whose lock you cannot see is
+   * a row you cannot tell is holding a credential. Delete follows it here — where the base
+   * grid keeps it at `opacity: 0` until the row is hovered — for two reasons. Beside a lock
+   * that is always drawn, an empty 32px cell reads as something failing to render rather
+   * than as an action in waiting. And this grid is a small focused editor, not a
+   * twenty-row-long request panel, so there is no clutter to buy back by hiding it.
+   *
+   * `--color-text-subtle` rather than `.icon-btn`'s `--color-text-muted`: always-visible
+   * means quiet by default. `.icon-btn:hover` still lights both up. */
+  .var-grid .row-secret,
+  .var-grid .row-delete {
+    color: var(--color-text-subtle);
+  }
+
+  .var-grid .row-delete {
+    opacity: 1;
+  }
+
+  .var-grid .row-secret.on {
+    color: var(--color-accent);
+    background: var(--color-surface-accent);
+  }
+
+  .env-session-note {
+    padding: 8px 2px 0;
+    color: var(--color-text-subtle);
+    font-size: var(--text-2xs);
   }
 
   /* ── Attached file ─────────────────────────────────────────────────────── */
@@ -2977,56 +3157,105 @@
     border-left: 1px solid var(--color-border-subtle);
   }
 
-  /* ── Sidebar search trigger ────────────────────────────────────────────── */
-  /* The in-tree filter this replaces only matched direct children, so searching for
-   * anything nested two levels deep emptied the whole tree. It now opens the
-   * command palette, which searches every request by name, method and URL. */
-  .search-trigger {
-    height: var(--h-control-md);
+  /* ── Environment picker ────────────────────────────────────────────────────
+   * Its own row in the collection panel, under the heading — not in this section's
+   * `.workspace-top`, which is where the workspace-global version of this lived. That
+   * strip is not scoped to a collection, so a picker there had to carry a label saying
+   * which collection it really acted on; here the panel is the scope and the row says
+   * nothing. It stays filed beside `.workspace-actions` anyway, because whoever comes
+   * looking for it will look here first.
+   *
+   * The margin is the one the sidebar's search row used before it was removed: it is the
+   * only chrome between the collection heading and the tree now, so it inherits the job of
+   * spacing both. */
+  .env-picker {
     margin: 4px 9px 7px;
+    display: flex;
+    align-items: center;
+    /* 2px is `.workspace-actions`' gap and it separates *bare* icon buttons. Both children
+     * here draw a box, and at 2px they touched. `.request-bar` uses 7px between its own
+     * boxed controls; this row is narrower. */
+    gap: 6px;
+  }
+
+  /* An environment's name is a name, not a code token — the one place the `inline`
+   * variant's mono is wrong.
+   *
+   * `flex` and `min-width` are on the *trigger* and not on `.select`, which is
+   * `display: contents`: the wrapper is a scaffold and never a flex item, so sizing it
+   * does nothing at all. Taking the row is what makes the collection's longest
+   * environment name decide the truncation rather than an arbitrary cap — and
+   * `.select-value` already ellipsises, so the chain ends there.
+   *
+   * The box is spelled out here, and the height with it: the base `inline` variant is
+   * `--h-control-xs` and borderless, which is right for a picker sitting inside a grid
+   * cell or a toolbar and wrong for one that is a row of its own. */
+  .env-picker .select-trigger[data-variant='inline'] {
+    flex: 1;
+    min-width: 0;
+    height: var(--h-control-md);
+    padding: 0 6px 0 8px;
+    border-color: var(--color-border);
+    border-radius: var(--radius-md);
+    background: var(--color-surface-3);
+    font-family: var(--font-sans);
+    font-size: var(--text-2xs);
+  }
+
+  /* The trigger's box at `auto` width, so the two read as one pair. Not built on
+   * `.icon-btn`: that one is square and centres its content, neither of which a labelled
+   * button wants.
+   *
+   * Boxing the icon was the previous attempt and it was not enough; a glyph alone beside a
+   * bordered field does not announce itself. The word is what fixes it.
+   *
+   * `flex: 0 0 auto` with `nowrap`, so the label never truncates: every bit of shrinking is
+   * absorbed by the trigger's `flex: 1; min-width: 0` above. That is the right way round —
+   * a clipped environment name still reads through `.select-value`'s ellipsis, and a
+   * clipped verb does not.
+   *
+   * **The focus ring stays**, which the sidebar's search row used to suppress: it opened a
+   * `<dialog>` too, and closing one with Escape counts as a keyboard interaction, so the
+   * restored focus came back lit. That was worth a comment because the fix — `outline:
+   * none` — fails SC 2.4.7 for the control, and this button does not copy it: a stray ring
+   * in one flow is a far smaller problem than a focusable control with no focus
+   * indicator. */
+  .env-manage {
+    flex: 0 0 auto;
+    height: var(--h-control-md);
     padding: 0 8px;
     display: flex;
     align-items: center;
     gap: 6px;
-    background: var(--color-surface-3);
     border: 1px solid var(--color-border);
     border-radius: var(--radius-md);
+    background: var(--color-surface-3);
     color: var(--color-text-subtle);
+    /* Mono, because the label is `.env` — a filename, not a word. It is what makes the
+     * control read as being about an env file at a glance, which two rounds of a boxed icon
+     * and then a prose verb did not. */
+    font-family: var(--font-mono);
     font-size: var(--text-2xs);
-    text-align: left;
+    white-space: nowrap;
     cursor: pointer;
     transition:
       border-color var(--duration-fast) var(--ease-standard),
       color var(--duration-fast) var(--ease-standard);
   }
 
-  .search-trigger:hover {
+  .env-manage:hover {
     border-color: var(--color-border-control);
     color: var(--color-text-muted);
   }
 
-  /* Nothing on focus, by explicit decision — hover is the only state this button lights
-   * up for. It opens the command palette, the palette is a `<dialog>` and `showModal()`
-   * restores focus here when it closes, and closing with Escape is a keyboard interaction,
-   * so `:focus-visible` matched: dismissing the palette left this sitting lit in the
-   * sidebar every time. A ring outside the border, a ring painted onto it and a border
-   * recolour were each tried and each read as the control still being active.
+  /* The sidebar's search row lived here and is gone. The command palette it opened is
+   * still reachable from Ctrl+K and from `WorkspaceActions`' own trigger in the top bar,
+   * which is what made removing the row safe. `.env-picker` above inherited its margin.
    *
-   * The cost, stated plainly so nobody has to rediscover it: this is a focusable button
-   * with no focus indicator, which fails SC 2.4.7 (AA) for this one control. What makes it
-   * survivable rather than merely broken is that it is a shortcut, not a destination — it
-   * only opens the palette, and the palette has its own binding that works from anywhere,
-   * so no keyboard path depends on stopping here. Restoring focus without the marker would
-   * be the real fix; `focus({ focusVisible: false })` is the API for it and Chromium, which
-   * is what WebView2 is, does not implement it. Revisit when it does. */
-  .search-trigger:focus-visible {
-    outline: none;
-  }
-
-  .search-trigger .shortcut {
-    margin-left: auto;
-  }
-
+   * Two things it recorded, kept because they outlive it: its own `transition` was dead
+   * code, overridden in full by the shared list at the end of this file — same
+   * specificity, further down — and its `outline: none` on `:focus-visible` is the debt
+   * `.env-manage` deliberately does not repeat. */
   .tree-icon {
     flex: 0 0 auto;
     color: var(--color-text-subtle);
@@ -4046,6 +4275,235 @@
     right: 10px;
   }
 
+  /* ── Environments ──────────────────────────────────────────────────────── */
+  /* A one-for-one mirror of the Settings classes above, so whoever knows one knows the
+   * other: same plate, same two-column geometry, same absolutely-positioned dismiss. */
+  .env-dialog {
+    /* Viewport terms divided by `--zoom`, px caps left to grow.
+     *
+     * 880px makes this the widest plate in the app — past `.code-dialog`'s 840 — and the
+     * reason is that it is the only two-column one: 196px of nav plus 40px of panel padding
+     * never hold content, so 880 buys 644px of grid where 760 bought 524. Measured against
+     * the code view's ~800px of editor, that is the comparable figure, not the total.
+     *
+     * It also puts `.kv-wrap` 84px clear of the 560px container query below, so the narrow
+     * branch stops governing the ordinary case and only takes over when the window or the
+     * zoom really squeezes — which is what it is for. */
+    width: min(880px, calc(92vw / var(--zoom, 1)));
+    height: min(calc(74vh / var(--zoom, 1)), 560px);
+    margin: auto;
+    padding: 0;
+    border: 1px solid var(--color-border-strong);
+    border-radius: var(--radius-xl);
+    background: var(--color-surface-2);
+    color: var(--color-text);
+    box-shadow: var(--shadow-menu);
+    overflow: hidden;
+  }
+
+  /* Fixed, for the reason `.settings-shell` is: the variable count differs per
+   * environment, and an auto height would resize the dialog under the pointer every
+   * time the selected one changed. */
+  .env-shell {
+    position: relative;
+    height: 100%;
+    display: grid;
+    grid-template-columns: 196px minmax(0, 1fr);
+  }
+
+  /* The empty state has no list to sit beside, so it takes the whole plate. */
+  .env-shell-empty {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  /* 8px of top padding, and it is arithmetic rather than taste: `.env-close` is a 28px
+   * `.icon-btn` at `top: 10px`, so its glyph is optically centred on y=24, and `.env-add` is
+   * 32px with its label centred in the box — which puts that label on y=24 only if the box
+   * runs 8..40. Aligning the button's *top edge* to the X's would have been 10px; this
+   * aligns the text, which is the line the eye actually reads across.
+   *
+   * Deliberately not `.env-panel`'s 42px. That number exists to clear the X, which sits over
+   * the panel and not over this column — matching it just pushed the whole list down past
+   * the thing it was meant to line up with. Until the heading became `sr-only` its ~30px of
+   * box was making up the difference here by accident. */
+  .env-nav {
+    padding: 8px 8px 14px;
+    display: flex;
+    flex-direction: column;
+    border-right: 1px solid var(--color-border);
+    background: var(--color-surface-3);
+  }
+
+  /* `flex: 1` with `min-height: 0` and not just `overflow: auto`: a flex item defaults to
+   * `min-height: auto`, which refuses to shrink below its content, so the overflow never
+   * engaged and a long enough list pushed out of the column instead of scrolling. The
+   * `margin-top: auto` that used to sit on `.env-add` disguised it by absorbing the slack. */
+  .env-list {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    overflow: auto;
+  }
+
+  /* Scoped to the tablist, not the column, so `.env-add` below keeps the colour written
+   * for it — the trap `.settings-sections` documents. */
+  .env-list button {
+    min-height: var(--h-control-md);
+    padding: 5px 9px;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 0 6px;
+    position: relative;
+    border: 0;
+    border-radius: var(--radius-sm);
+    background: none;
+    color: var(--color-text-muted);
+    font-size: var(--text-xs);
+    text-align: left;
+    cursor: pointer;
+  }
+
+  .env-list button:hover {
+    background: var(--color-surface-hover);
+    color: var(--color-text);
+  }
+
+  /* The tree's rail again, so every "this is the row in question" mark in the app is
+   * one object. */
+  .env-list button.active {
+    background: var(--color-surface-accent);
+    color: var(--color-text-strong);
+  }
+
+  .env-list button.active::before {
+    content: '';
+    position: absolute;
+    left: 2px;
+    top: 50%;
+    translate: 0 -50%;
+    width: 2px;
+    height: 16px;
+    border-radius: var(--radius-full);
+    background: var(--color-accent);
+  }
+
+  .env-tab-count {
+    grid-column: 1;
+    color: var(--color-text-subtle);
+    font-size: var(--text-2xs);
+  }
+
+  /* Accent, and not a second green: this token already means "selected", and the
+   * environment that is applied to requests is the selected one. */
+  .env-tab-mark {
+    grid-column: 2;
+    grid-row: 1 / span 2;
+    display: inline-flex;
+    color: var(--color-accent);
+  }
+
+  /* At the top of the column, under the title — not pushed to the floor by a
+   * `margin-top: auto`, where it was far enough from the list to read as unrelated to it. */
+  .env-add {
+    margin-bottom: 4px;
+    height: var(--h-control-md);
+    padding: 0 9px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    border: 0;
+    border-radius: var(--radius-sm);
+    background: none;
+    color: var(--color-text-subtle);
+    font-size: var(--text-xs);
+    text-align: left;
+    cursor: pointer;
+  }
+
+  .env-add:hover {
+    background: var(--color-surface-hover);
+    color: var(--color-text);
+  }
+
+  /* Top padding does two things. It clears `.env-close` — a 28px `.icon-btn` at
+   * `top: 10px`, so it ends at 38px — and it lands `.env-header` on the same line as the
+   * first environment tab on the other side of the divider.
+   *
+   * Written as the sum that produces that line rather than as the `44px` it evaluates to:
+   * `.env-nav`'s own top padding, plus `.env-add`'s height, plus the margin under it, is
+   * exactly where `.env-list` starts. Same argument `.template-input` makes for `--ti-box`
+   * — a change of control height must not leave the two columns two pixels apart with
+   * nothing to say why. That is also why this is not a `margin-top` on `.env-header`: the
+   * number describes the panel's inset, not that row.
+   *
+   * `.env-nav` deliberately does not copy this value. The X sits over this panel, not over
+   * that column, so over there the top inset is set by the button that has to line up with
+   * the X instead. */
+  .env-panel {
+    min-width: 0;
+    padding: calc(8px + var(--h-control-md) + 4px) 20px 20px;
+    overflow: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+  }
+
+  .env-header {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+
+  .env-name {
+    flex: 1;
+    min-width: 0;
+    height: var(--h-control-sm);
+    padding: 0 8px;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    background: var(--color-surface-3);
+    font-family: var(--font-sans);
+  }
+
+  .env-activate {
+    height: var(--h-control-sm);
+    padding: 0 10px;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    background: var(--color-surface-3);
+    color: var(--color-text-muted);
+    font-size: var(--text-xs);
+    cursor: pointer;
+  }
+
+  .env-activate:hover:not(:disabled) {
+    background: var(--color-surface-hover);
+    color: var(--color-text);
+  }
+
+  /* Disabled means "already the active one", which is a statement and not a dead
+   * control — so it reads as the accent it is describing rather than as greyed out. */
+  .env-activate:disabled {
+    border-color: var(--color-border-accent);
+    background: var(--color-surface-accent);
+    color: var(--color-accent);
+    cursor: default;
+  }
+
+  .env-close {
+    position: absolute;
+    top: 10px;
+    right: 10px;
+  }
+
   /* ── Code view ─────────────────────────────────────────────────────────── */
   /* Same plate as the other three modals. Wider than Settings, because what it holds is
    * code at a width nobody chose: a Go snippet indents four levels and a bearer token is
@@ -4179,7 +4637,7 @@
   .method-chip,
   .placeholder,
   .workspace-actions,
-  .search-trigger,
+  .env-manage,
   .shortcut {
     -webkit-user-select: none;
     user-select: none;
@@ -4248,8 +4706,7 @@
       background-color var(--duration-fast) var(--ease-standard);
   }
 
-  .url-input,
-  .search-trigger,
+  .template-input.url,
   .select-trigger,
   .auth-editor input {
     transition:

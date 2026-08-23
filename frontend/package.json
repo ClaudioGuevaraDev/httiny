@@ -1,7 +1,7 @@
 {
   "name": "httiny-frontend",
   "private": true,
-  "version": "0.32.5",
+  "version": "0.33.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -13,6 +13,8 @@
     "format:check": "prettier --check \"src/**/*.{ts,tsx,css}\" \"*.{ts,js,json}\""
   },
   "dependencies": {
+    "@codemirror/autocomplete": "6.20.3",
+    "@codemirror/commands": "6.10.4",
     "@codemirror/lang-json": "6.0.2",
     "@codemirror/language": "6.12.4",
     "@codemirror/legacy-modes": "6.5.3",

@@ -1,12 +1,36 @@
 export type HttpMethod = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE' | 'HEAD' | 'OPTIONS'
 export type TreeNode = CollectionNode | FolderNode | RequestNode
 
+/**
+ * A collection owns its environments outright. There is no workspace-wide pool and no
+ * global picker: `{{baseUrl}}` in a request means whatever the collection that request
+ * lives in says it means, and nothing else.
+ *
+ * On the node rather than in a side table keyed by collection id, and that is not the
+ * denormalisation `RequestNode` warns about below — there is no second copy for this to
+ * drift from, and `renameNode`, `toggleNode` and `insertNode` cannot reach it. What it
+ * buys is that `removeNode` deletes a collection's environments with the collection,
+ * `WorkspaceState` gains no field, and `readWorkspace`/`readPrefs` keep their signatures.
+ *
+ * `mapTree` copies a node as `{ ...node, expanded }`, so `environments` survives a folder
+ * expand **by reference** — which is what `subscribeEnvironment` compares, and why a
+ * `mapTree` callback must never rebuild a collection node from its parts.
+ *
+ * `activeEnvironmentId` is here and not in `ui.json`. It decides which host a send
+ * reaches and which token signs it, so it is workspace data the way `auth.type` is, not
+ * view state the way `expanded` is — and keeping it beside the list it indexes is what
+ * lets `readTree` validate the reference where it reads both. `null` is "no environment",
+ * a state the picker offers on purpose: every `{{name}}` is then left standing, which is
+ * how you find out whether a request depends on one.
+ */
 export interface CollectionNode {
   id: string
   type: 'collection'
   name: string
   expanded: boolean
   children: TreeNode[]
+  environments: Environment[]
+  activeEnvironmentId: string | null
 }
 export interface FolderNode {
   id: string
@@ -34,6 +58,45 @@ export interface KeyValueRow {
   key: string
   value: string
   description: string
+}
+/**
+ * One environment variable: the key/value row plus a lock.
+ *
+ * Not `KeyValueRow`, and not an interface extending it, for the reason `FormRow` is
+ * neither: this row is persisted by its own reader and it spends a column the key/value
+ * grid does not have. The decisive part is `KeyValueGrid`'s signature — its `onChange`
+ * hands back `KeyValueRow[]`, and narrowing that to this type would take an `as`. The
+ * grid cannot be shared whichever way the type is declared, so the declaration may as
+ * well be the one that keeps a column added to `KeyValueRow` from silently landing in
+ * the workspace file's environment section.
+ *
+ * There is no `description`. A variable's key *is* its documentation, and the column it
+ * would take is spent on `secret` instead — the same trade `FormRow` makes for
+ * `contentType`.
+ *
+ * `secret` decides where the value lives, not how it is drawn: a locked value goes to the
+ * OS credential store and is absent from `workspace.json` by construction, exactly as
+ * `auth.token` and `auth.password` are. Empty means the credential store had nothing for
+ * it — or could not be reached at all.
+ */
+export interface EnvironmentVariable {
+  id: string
+  enabled: boolean
+  key: string
+  value: string
+  secret: boolean
+}
+/**
+ * A named set of variables belonging to one collection, with one active at a time.
+ *
+ * An array rather than a `Record` for the reason `tree` is one: the order is what the
+ * picker lists, and it is the user's. Two collections may both hold a "Production" and
+ * they are unrelated — which is the point.
+ */
+export interface Environment {
+  id: string
+  name: string
+  variables: EnvironmentVariable[]
 }
 /**
  * What a request body *is*. Six members, and the split between them decides which of
@@ -455,7 +518,10 @@ export type UpdateState =
  * A discriminated union on `kind` for the reason `UpdateState` is one: the dialog
  * branches on it exhaustively, so an intent added without copy fails to compile.
  */
-export type ConfirmIntent = { kind: 'deleteNode'; nodeId: string } | { kind: 'resetSettings' }
+export type ConfirmIntent =
+  | { kind: 'deleteNode'; nodeId: string }
+  | { kind: 'deleteEnvironment'; collectionId: string; environmentId: string }
+  | { kind: 'resetSettings' }
 
 /**
  * Labels for the filled chips — the sidebar tree, the tab strip and the command palette.

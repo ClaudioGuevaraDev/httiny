@@ -5,7 +5,7 @@ import { useT } from './language'
 import { flushNow } from './persistence'
 import { cancelRequest, runRequest, saveResponseBody, toggleRequest } from './requestRunner'
 import { shortcuts } from './shortcuts'
-import { methodOptions, useAppStore } from './store'
+import { methodOptions, shownCollection, useAppStore } from './store'
 import { isByteFormat } from './types'
 import { copySnippet } from './wire'
 
@@ -139,6 +139,49 @@ export function useCommands(enabled: boolean): Command[] {
       shortcuts.toggleSplit,
     )
     action('settings', 'command.settings.title', 'command.settings.keywords', () => useAppStore.getState().openSettings(), shortcuts.settings)
+
+    // Scoped to the collection the sidebar is showing, because that is the collection whose
+    // environments are on screen — and the only one the palette could name without
+    // becoming a list of every environment in the workspace.
+    //
+    // Group `'action'` rather than a `CommandGroup` of their own: a new group means touching
+    // four other places, which the seven method rows earn and two or three environments do
+    // not, and `'action'` is what the `>` filter searches.
+    const collection = shownCollection(store)
+    if (collection) {
+      action('environments', 'command.environments.title', 'command.environments.keywords', () => {
+        // Re-read at call time: the rail can move between building this list and running
+        // the row, and the dialog is addressed by id.
+        const target = shownCollection(useAppStore.getState())
+        if (target) useAppStore.getState().openEnvironments(target.id)
+      }, shortcuts.environments)
+
+      // The collection goes in the `subtitle`, which is where the navigation and request
+      // rows already put "which thing this is" — no palette row names the thing it acts on
+      // in its *title*. The `action` helper takes a `PlainMessageKey`, so these cannot go
+      // through it: their titles carry a slot.
+      for (const env of collection.environments) {
+        if (env.id === collection.activeEnvironmentId) continue
+        commands.push({
+          id: `action:env:${collection.id}:${env.id}`,
+          group: 'action',
+          title: t('command.useEnvironment.title', { name: env.name }),
+          subtitle: collection.name,
+          keywords: `${t('command.useEnvironment.keywords', { name: env.name })} ${collection.name}`.toLowerCase(),
+          run: () => useAppStore.getState().setActiveEnvironment(collection.id, env.id),
+        })
+      }
+      if (collection.activeEnvironmentId) {
+        commands.push({
+          id: `action:env:${collection.id}:none`,
+          group: 'action',
+          title: t('command.noEnvironment.title'),
+          subtitle: collection.name,
+          keywords: `${t('command.noEnvironment.keywords')} ${collection.name}`.toLowerCase(),
+          run: () => useAppStore.getState().setActiveEnvironment(collection.id, null),
+        })
+      }
+    }
     action('zoom-in', 'command.zoomIn.title', 'command.zoomIn.keywords', () => useAppStore.getState().zoomIn(), shortcuts.zoomIn)
     action('zoom-out', 'command.zoomOut.title', 'command.zoomOut.keywords', () => useAppStore.getState().zoomOut(), shortcuts.zoomOut)
     action('zoom-reset', 'command.zoomReset.title', 'command.zoomReset.keywords', () => useAppStore.getState().resetZoom(), shortcuts.zoomReset)

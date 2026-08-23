@@ -1,7 +1,20 @@
 import { BODY_LANGUAGES } from './responseBody'
 import { CODE_FONT_SIZE, SIDEBAR_WIDTH, SPLIT_RATIO, ZOOM, methodOptions } from './store'
 import { PART_KINDS } from './types'
-import type { BodyLanguage, BodyType, FormRow, HttpMethod, KeyValueRow, Locale, RequestDocument, SplitOrientation, ThemePreference, TreeNode } from './types'
+import type {
+  BodyLanguage,
+  BodyType,
+  Environment,
+  EnvironmentVariable,
+  FormRow,
+  HttpMethod,
+  KeyValueRow,
+  Locale,
+  RequestDocument,
+  SplitOrientation,
+  ThemePreference,
+  TreeNode,
+} from './types'
 
 /**
  * The on-disk schema.
@@ -29,8 +42,18 @@ import type { BodyLanguage, BodyType, FormRow, HttpMethod, KeyValueRow, Locale, 
  * claim it and leave the `>` guard meaningless. Skipping one integer costs nothing:
  * a 2 file is read by the validators below, which ignore the `environments` key it
  * carries, and `toWorkspaceFile` drops the key on the first save.
+ *
+ * **4 carries per-collection environments.** 3 is spent too — it is 1's payload under a
+ * new number, issued to escape the burnt 2 — and the bump to 4 is *not* about a field the
+ * readers cannot default, which by the rule above would need no bump at all. It is about
+ * the **credential store**, which this number is the only marker for. A build that reads
+ * this file as 3 has readers that ignore `environments` on a collection node and a
+ * `toStoredNode` that does not write it: its first autosave would delete every
+ * environment in the workspace and leave their credentials named by nothing, in a store
+ * that cannot be enumerated and therefore cannot ever be swept. Refusing the file is the
+ * correct answer, and the `>` guard in `hydrate` is what produces it.
  */
-export const WORKSPACE_VERSION = 3
+export const WORKSPACE_VERSION = 4
 export const PREFS_VERSION = 1
 
 /**
@@ -66,9 +89,57 @@ interface StoredDocument {
   body: RequestDocument['body']
   auth: StoredAuth
 }
+/**
+ * A union rather than one shape with a blankable `value`, so a locked variable has
+ * nowhere to put one: writing a credential into this file is a compile error, which is
+ * the same construction `StoredAuth` uses one type up.
+ *
+ * No `id`. `readRows` already establishes that a row's id is regenerated from its
+ * position rather than trusted, so storing one is churn in a file meant to be diffed by
+ * hand — and it is why the credential-store key is built from the variable's **key** and
+ * never from its id, which would move whenever a row was inserted above it.
+ */
+type StoredVariable = { key: string; enabled: boolean; secret: false; value: string } | { key: string; enabled: boolean; secret: true }
+
+interface StoredEnvironment {
+  id: string
+  name: string
+  variables: StoredVariable[]
+}
+
+/**
+ * Three members, where collection and folder used to share one. They are different shapes
+ * now: only a collection carries environments, and the split is what makes a folder that
+ * carries them unrepresentable rather than merely unwritten.
+ */
 type StoredNode =
-  | { id: string; type: 'collection' | 'folder'; name: string; children: StoredNode[] }
+  | { id: string; type: 'collection'; name: string; children: StoredNode[]; environments: StoredEnvironment[]; activeEnvironmentId: string | null }
+  | { id: string; type: 'folder'; name: string; children: StoredNode[] }
   | { id: string; type: 'request'; requestId: string }
+
+/**
+ * The credential-store key for one environment variable.
+ *
+ * Here rather than in `environments.ts` because it is a **storage** identifier, next to
+ * the shapes that decide what is not written to the file. It also keeps `persistence.ts`
+ * off the resolver module.
+ *
+ * Keyed by the variable's **key**, never by its row id: a stored variable carries no id
+ * and `readVariables` regenerates one from the position, so an id moves the moment a row
+ * is inserted above — and a keychain entry that moved would be a credential silently
+ * attached to a different variable.
+ *
+ * The **collection** id is in it because an environment id is only unique within its
+ * collection. Without it, a collection copied wholesale by hand would alias the
+ * original's credentials.
+ *
+ * Injective without escaping: the first three segments are fixed-position and neither a
+ * collection id (`collection-<stamp>`) nor an environment id (a UUID) contains a colon,
+ * so everything after the third is the user's key, whatever is in it. Nothing ever parses
+ * this back apart — the save path, the load path and the signature all build it from the
+ * same three inputs.
+ */
+export const environmentSecretKey = (collectionId: string, envId: string, key: string): string => `env:${collectionId}:${envId}:${key}`
 
 export interface WorkspaceFile {
   tree: StoredNode[]
@@ -155,10 +226,32 @@ const collapsedIn = (nodes: TreeNode[], out: string[] = []): string[] => {
   return out
 }
 
-const toStoredNode = (node: TreeNode): StoredNode =>
-  node.type === 'request'
-    ? { id: node.id, type: 'request', requestId: node.requestId }
-    : { id: node.id, type: node.type, name: node.name, children: node.children.map(toStoredNode) }
+const toStoredVariable = (variable: EnvironmentVariable): StoredVariable =>
+  variable.secret
+    ? { key: variable.key, enabled: variable.enabled, secret: true }
+    : { key: variable.key, enabled: variable.enabled, secret: false, value: variable.value }
+
+const toStoredEnvironment = (env: Environment): StoredEnvironment => ({ id: env.id, name: env.name, variables: env.variables.map(toStoredVariable) })
+
+/**
+ * Three branches, mirroring `StoredNode`.
+ *
+ * One consequence worth knowing: a keystroke in a **locked** variable's value changes
+ * nothing in `toStoredVariable`'s output, so `workspace.json` is not rewritten at all —
+ * only the slower, separately debounced credential write fires.
+ */
+const toStoredNode = (node: TreeNode): StoredNode => {
+  if (node.type === 'request') return { id: node.id, type: 'request', requestId: node.requestId }
+  if (node.type === 'folder') return { id: node.id, type: 'folder', name: node.name, children: node.children.map(toStoredNode) }
+  return {
+    id: node.id,
+    type: 'collection',
+    name: node.name,
+    children: node.children.map(toStoredNode),
+    environments: node.environments.map(toStoredEnvironment),
+    activeEnvironmentId: node.activeEnvironmentId,
+  }
+}
 
 const toStoredDocument = (doc: RequestDocument): StoredDocument => ({
   id: doc.id,
@@ -278,6 +371,49 @@ const readFormRows = (value: unknown, prefix: string): FormRow[] => {
   }))
 }
 
+/**
+ * An environment's variables, on the same defensive terms as `readRows`: the id is
+ * regenerated from the position rather than trusted, because a missing or duplicated one
+ * collides as a React key.
+ *
+ * A locked variable's value is forced empty even when the file carries one. A hand edit
+ * that put a credential into `workspace.json` must not be loaded and then written
+ * straight back out — the value comes from the credential store or from nowhere, and
+ * injecting one by hand means unticking the lock first. It is not data loss, and it is
+ * worth saying so here because it looks like it.
+ */
+const readVariables = (value: unknown, prefix: string): EnvironmentVariable[] => {
+  const rows = Array.isArray(value) ? value.filter(isRecord) : []
+  // Never a bare column header, the rule `readFormRows` above states.
+  if (!rows.length) return [{ id: `${prefix}-0`, enabled: true, key: '', value: '', secret: false }]
+  return rows.map((row, index) => {
+    const secret = bool(row.secret, false)
+    return { id: str(row.id) || `${prefix}-${index}`, enabled: bool(row.enabled, true), key: str(row.key), value: secret ? '' : str(row.value), secret }
+  })
+}
+
+/**
+ * One collection's environments.
+ *
+ * Ids key the credential store, so a duplicate *within a collection* is dropped the way
+ * `readTree` drops a duplicate node id. Across collections they are unrelated and never
+ * compared: the key carries the collection id, so a hand-copied collection block keeps
+ * its environments working rather than having them silently discarded.
+ */
+const readEnvironments = (value: unknown): Environment[] => {
+  if (!Array.isArray(value)) return []
+  const seen = new Set<string>()
+  const out: Environment[] = []
+  for (const raw of value) {
+    if (!isRecord(raw)) continue
+    const id = str(raw.id)
+    if (!id || seen.has(id)) continue
+    seen.add(id)
+    out.push({ id, name: str(raw.name, 'Environment'), variables: readVariables(raw.variables, `${id}-v`) })
+  }
+  return out
+}
+
 const readFileBody = (value: unknown): RequestDocument['body']['file'] => {
   const file = isRecord(value) ? value : {}
   return { path: str(file.path), contentType: str(file.contentType) }
@@ -337,13 +473,25 @@ const readTree = (value: unknown, documents: Record<string, RequestDocument>, co
     }
     if (raw.type !== 'collection' && raw.type !== 'folder') continue
     seen.add(id)
-    out.push({
+    const shared = {
       id,
-      type: raw.type,
       name: str(raw.name, raw.type === 'collection' ? 'Collection' : 'Folder'),
       expanded: !collapsed.has(id),
       children: readTree(raw.children, documents, collapsed, seen),
-    })
+    }
+    if (raw.type === 'folder') {
+      out.push({ ...shared, type: 'folder' })
+      continue
+    }
+    const environments = readEnvironments(raw.environments)
+    const active = str(raw.activeEnvironmentId)
+    // An id naming an environment that is gone falls to **null**, never to the first
+    // survivor. `deleteEnvironment` states the rule and this is the same one on the load
+    // path: an environment is a host and a set of credentials, and a guessed one is worse
+    // than none. The two are read three lines apart, which is the reason this field lives
+    // on the node rather than in `ui.json` — there it would be a machine-local pointer
+    // into a portable list, and validating it would mean handing `readPrefs` the tree.
+    out.push({ ...shared, type: 'collection', environments, activeEnvironmentId: environments.some(env => env.id === active) ? active : null })
   }
   return out
 }
@@ -364,6 +512,12 @@ const reachable = (nodes: TreeNode[], out: Set<string> = new Set()): Set<string>
  * root would be unreachable through the UI — invisible, undeletable, and still
  * taking up space in the file. Hand-edited workspaces and files written before the
  * rail existed are both sources of these, so the reader repairs rather than trusts.
+ *
+ * This is no longer neutral for what a request *means*. The first collection is also the
+ * one whose environments those requests now resolve against, so a reparented request can
+ * come back with a different `{{baseUrl}}` than it went in with. There is nothing better
+ * to do — the alternative is leaving it invisible — but it is the kind of thing that gets
+ * diagnosed as a resolver bug.
  */
 const adopt = (nodes: TreeNode[]): TreeNode[] => {
   const stray = nodes.filter(node => node.type !== 'collection')
@@ -374,7 +528,7 @@ const adopt = (nodes: TreeNode[]): TreeNode[] => {
   if (first && first.type === 'collection') {
     return [{ ...first, children: [...first.children, ...stray] }, ...collections.slice(1)]
   }
-  return [{ id: 'collection-recovered', type: 'collection', name: 'My Collection', expanded: true, children: stray }]
+  return [{ id: 'collection-recovered', type: 'collection', name: 'My Collection', expanded: true, children: stray, environments: [], activeEnvironmentId: null }]
 }
 
 export interface LoadedWorkspace {
@@ -452,10 +606,9 @@ export function readPrefs(payload: unknown, documents: Record<string, RequestDoc
   }
 }
 
-/** `collapsedNodeIds` is needed to build the tree, so it is read before the rest. */
 /**
- * The credential-store ids left behind by the environment variables feature, which was
- * removed in 0.32.0.
+ * The credential-store ids left behind by the environment variables feature as it existed
+ * in 0.31.0, which was removed in 0.32.0.
  *
  * Transitional, and deletable together with the field it reads. `go-keyring` cannot
  * enumerate a store, so an id nobody names is an id nobody can delete — and these were
@@ -463,6 +616,20 @@ export function readPrefs(payload: unknown, documents: Record<string, RequestDoc
  * shape is read here rather than reconstructed at the call site because this file is
  * where untrusted payloads are read; a locked variable stored no value, so only its key
  * was ever in the file.
+ *
+ * **Do not repurpose this for the environments that came back in 0.33.0.** It does not
+ * cover them and must not: they hang off a collection node, are keyed
+ * `env:<collection id>:<environment id>:<variable key>` — four segments, with a
+ * `collection-<stamp>` where this emits an `env-<stamp>` — and need no sweeper at all,
+ * because `secretKeysOf` names every live key on every save and `lastKeep` names every
+ * departed one exactly once. The two id namespaces are disjoint, which is what makes it
+ * safe for this to still run.
+ *
+ * It also only emits anything while the payload still carries a *top-level* `environments`
+ * key, which `toWorkspaceFile` at version 4 never writes. So it fires at most once per
+ * machine, from a pre-4 file that has never been re-saved. Delete it, its call site in
+ * `persistence.ts` and that call site's `orphans` list in the release after the one that
+ * shipped version 4.
  */
 export const legacySecretKeys = (payload: unknown): string[] => {
   if (!isRecord(payload)) return []
@@ -487,6 +654,7 @@ export const legacySecretKeys = (payload: unknown): string[] => {
   return out
 }
 
+/** `collapsedNodeIds` is needed to build the tree, so it is read before the rest. */
 export const readCollapsed = (payload: unknown): string[] => {
   if (!isRecord(payload) || !Array.isArray(payload.collapsedNodeIds)) return []
   return payload.collapsedNodeIds.filter((v): v is string => typeof v === 'string')

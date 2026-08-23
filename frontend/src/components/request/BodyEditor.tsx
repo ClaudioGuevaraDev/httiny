@@ -4,6 +4,7 @@ import { json } from '@codemirror/lang-json'
 import { FileX2 } from 'lucide-react'
 import { requestBodyEditorId } from '../../domIds'
 import { httinyTheme } from '../../editorTheme'
+import { templateVariables } from '../../templateEditor'
 import type { PlainMessageKey } from '../../i18n'
 import { useT } from '../../language'
 import { useAppStore } from '../../store'
@@ -51,7 +52,10 @@ const isTextual = (type: BodyType): type is 'json' | 'text' => type === 'json' |
  * dispatching a `reconfigure` per render with a fresh `basicSetup()` behind it.
  */
 const BODY_SETUP: BasicSetupOptions = { lineNumbers: true, foldGutter: false, highlightActiveLine: true }
-const BODY_EXTENSIONS: Record<'json' | 'text', Extension[]> = { json: [json()], text: [] }
+const BODY_EXTENSIONS: Record<'json' | 'text', Extension[]> = {
+  json: [json(), ...templateVariables],
+  text: [...templateVariables],
+}
 
 export function BodyEditor({ request }: { request: RequestDocument }) {
   const { t } = useT()

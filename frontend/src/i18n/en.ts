@@ -26,7 +26,6 @@ export const en = {
 
   // ── Sidebar ──────────────────────────────────────────────────────────────────
   'sidebar.nav': 'Collections',
-  'sidebar.search': 'Search requests',
   'sidebar.renameInput': 'Rename {name}',
   'sidebar.save.browser': 'Not saved — browser preview',
   'sidebar.save.newer': 'Newer workspace — not saving',
@@ -603,4 +602,49 @@ export const en = {
   'data.newCollection': 'New Collection',
   'data.newFolder': 'New Folder',
   'data.myCollection': 'My Collection',
+  'data.newEnvironment': 'New Environment',
+  'data.copyOf': '{name} copy',
+  // ── Environments ──────────────────────────────────────────────────────────────
+  // Environment *names* are user data and are never translated, and neither is the `.env`
+  // label on the picker's button — a filename is a technical token, like the HTTP methods.
+  // These are the chrome around them. Sentence case throughout: `.kv-header` does its own
+  // uppercasing in CSS, so no accent is lost to a hand-typed capital.
+  'env.picker.aria': 'Environment for {name}',
+  'env.picker.none': 'No environment',
+  'env.manage.aria': 'Manage .env variables for {name}',
+  'env.manage.title': 'Manage variables  {keys}',
+  'env.title': 'Variables · {name}',
+  'env.close': 'Close',
+  'env.list': 'Environments',
+  'env.new': 'New environment',
+  'env.name': 'Environment name',
+  'env.namePlaceholder': 'Staging',
+  'env.activate': 'Activate',
+  'env.active': 'Active',
+  'env.duplicate': 'Duplicate environment',
+  'env.delete': 'Delete environment',
+  'env.count.one': '{count} variable',
+  'env.count.other': '{count} variables',
+  'env.confirm.title': 'Delete {name}?',
+  // Says the part that is not obvious: this is the one delete that reaches past
+  // workspace.json into the OS credential store.
+  'env.confirm.detail': 'Its variables go with it, and any locked values are removed from the credential store. This cannot be undone.',
+  'env.confirm.action': 'Delete',
+  'env.empty.title': 'No variables in {name}',
+  'env.empty.desc': 'Group the values that change between servers — a host, a tenant, a token — and write {example} in a URL, a header or a body. One pass: a variable inside a value is not expanded.',
+  'env.empty.new': 'New environment',
+  'env.var.add': 'Add variable',
+  // The completion dropdown's right-hand column. A locked variable's value never appears
+  // there — the marker is what says a value exists and is being withheld.
+  'env.complete.secret': 'locked',
+  'env.complete.empty': 'empty',
+  'env.var.secret': 'Keep out of the workspace file',
+  'env.var.secretNamed': 'Keep {name} out of the workspace file',
+  'env.var.sessionOnly': 'No credential store is reachable, so locked values last for this session only and are lost on restart.',
+  'command.environments.title': 'Manage variables',
+  'command.environments.keywords': 'environment variables env vars secrets',
+  'command.useEnvironment.title': 'Use {name}',
+  'command.useEnvironment.keywords': 'environment use switch activate {name}',
+  'command.noEnvironment.title': 'Use no environment',
+  'command.noEnvironment.keywords': 'environment none off clear disable variables',
 } as const

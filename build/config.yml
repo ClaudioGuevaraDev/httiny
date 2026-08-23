@@ -7,7 +7,7 @@ info:
   description: "A tiny, focused HTTP client for developers."
   copyright: "Copyright 2026 HTTiny"
   comments: "Dark, fast and frictionless HTTP tooling."
-  version: "0.32.5"
+  version: "0.33.0"
 
 dev_mode:
   root_path: .

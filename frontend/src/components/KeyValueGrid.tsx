@@ -3,6 +3,7 @@ import type { MessageKey, PlainMessageKey } from '../i18n'
 import { useT } from '../language'
 import { freshRow } from '../store'
 import type { KeyValueRow } from '../types'
+import { TemplateInput } from './TemplateInput'
 
 type Field = 'key' | 'value' | 'description'
 
@@ -47,6 +48,8 @@ export function KeyValueGrid({
   rows: KeyValueRow[]
   onChange: (rows: KeyValueRow[]) => void
   addLabel: PlainMessageKey
+  /** Prefixes the description column's form name. It used to prefix all three; the other
+   *  two are contenteditables now and have nowhere to put one. */
   name: string
 }) {
   const { t } = useT()
@@ -73,21 +76,39 @@ export function KeyValueGrid({
           >
             {row.enabled && <Check size={11} aria-hidden="true" />}
           </button>
-          {(['key', 'value', 'description'] as const).map(field => (
-            <input
-              key={field}
-              className="technical-input"
-              value={row[field]}
-              name={`${name}-${field}`}
-              aria-label={t(FIELD_LABEL[field])}
-              placeholder={t(PLACEHOLDER[field])}
-              // Header names and values are code tokens, not prose: a password manager
-              // offering to fill them, or a red squiggle under `X-Api-Key`, is noise.
-              autoComplete="off"
-              spellCheck={field === 'description'}
-              onChange={e => onChange(rows.map(r => (r.id === row.id ? { ...r, [field]: e.target.value } : r)))}
-            />
-          ))}
+          {(['key', 'value', 'description'] as const).map(field =>
+            /* Key and value are resolved on the way to the wire — `requestDTO.ts` runs
+               the environment's resolver over both, for params and headers and for the
+               urlencoded body — so a `{{variable}}` in either one means something and is
+               worth marking. `description` is resolved by nothing and never reaches the
+               wire at all: it is prose, which is what the `spellCheck` line below has
+               always said, and it is the one field where a spellchecker, dictation and
+               autocorrect actually matter. A contenteditable with `spellcheck` hard-wired
+               off by CodeMirror would take all three away, so that column keeps its
+               `<input>` — and with it the `name` this component's `name` prop prefixes. */
+            field === 'description' ? (
+              <input
+                key={field}
+                className="technical-input"
+                value={row.description}
+                name={`${name}-description`}
+                aria-label={t(FIELD_LABEL.description)}
+                placeholder={t(PLACEHOLDER.description)}
+                autoComplete="off"
+                spellCheck
+                onChange={e => onChange(rows.map(r => (r.id === row.id ? { ...r, description: e.target.value } : r)))}
+              />
+            ) : (
+              <TemplateInput
+                key={field}
+                variant="cell"
+                value={row[field]}
+                ariaLabel={t(FIELD_LABEL[field])}
+                placeholder={t(PLACEHOLDER[field])}
+                onChange={next => onChange(rows.map(r => (r.id === row.id ? { ...r, [field]: next } : r)))}
+              />
+            ),
+          )}
           <button
             type="button"
             className="icon-btn xs row-delete"
