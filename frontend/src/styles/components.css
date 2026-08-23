@@ -243,6 +243,12 @@
    * ring the rectangle is quiet enough to live with. */
   .panel-toggle {
     width: var(--h-tabbar);
+    /* Not inherited from `.icon-btn`: its 28px is a definite cross size, which defeats
+     * this flex container's `stretch` and left the button 28px tall at the top of a 40px
+     * bar — hover plate, border-right and icon all short of it, against a `.request-tab`
+     * that sets its own height. `100%` and not `--h-tabbar`, because `.workspace-top`'s
+     * border-bottom is inside its 40px, so 40px here would overhang the content box. */
+    height: 100%;
     border-right: 1px solid var(--color-border-subtle);
     border-radius: 0;
   }
