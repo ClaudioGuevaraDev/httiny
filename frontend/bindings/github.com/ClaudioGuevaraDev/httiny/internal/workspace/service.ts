@@ -45,6 +45,10 @@ export function LoadPrefs(): $CancellablePromise<$models.LoadResult> {
 /**
  * LoadSecrets fetches credentials for the given request ids in one call rather than
  * one round trip each, which matters because this sits on the startup path.
+ * 
+ * The reads run concurrently but are assembled in the caller's order, and the last error
+ * in that order still wins — the same answer the sequential loop gave, so nothing
+ * downstream can tell the difference.
  */
 export function LoadSecrets(ids: string[] | null): $CancellablePromise<$models.SecretsResult> {
     return $Call.ByID(1489042866, ids);
