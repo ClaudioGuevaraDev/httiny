@@ -2,7 +2,9 @@ import { create } from 'zustand'
 import { translate } from './i18n'
 import { DEFAULT_BODY_VIEW } from './responseBody'
 import type { PreparedImport } from './workspaceFile'
-import { DEFAULT_SNIPPET_TARGET, type SnippetTarget } from './snippets'
+// From the leaf and not the barrel: the barrel carries the eleven snippet generators and
+// the grammars behind them, and the store needs a default id and a union of strings.
+import { DEFAULT_SNIPPET_TARGET, type SnippetTarget } from './snippets/targets'
 import type {
   BodyLanguage,
   BodyView,

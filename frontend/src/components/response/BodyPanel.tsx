@@ -1,22 +1,40 @@
+import { lazy, Suspense } from 'react'
 import { FileX2 } from 'lucide-react'
 import { formatBytes } from '../../format'
 import { useLocale, useT } from '../../language'
 import type { Match } from '../../response/search'
 import type { BodyLanguage, BodyMode, SuccessResponse } from '../../types'
 import { Placeholder } from '../Placeholder'
-import { ArchiveBody } from './ArchiveBody'
-import { CsvTable } from './CsvTable'
-import { FontBody } from './FontBody'
-import { HexBody } from './HexBody'
 import { HtmlPreview } from './HtmlPreview'
 import { ImageBody } from './ImageBody'
 import { JsonTree } from './JsonTree'
-import { MarkdownPreview } from './MarkdownPreview'
 import { MediaBody } from './MediaBody'
-import { PdfBody } from './PdfBody'
-import { SseBody } from './SseBody'
 import { SvgBody } from './SvgBody'
 import { TextBody } from './TextBody'
+
+/**
+ * The viewers for formats an ordinary session never meets, split out of the startup chunk.
+ *
+ * The line is drawn at "would the first response you send need this?". JSON, text, images
+ * and the HTML/SVG previews stay eager, because delaying the common path by a frame to
+ * save parse time nobody notices is the wrong trade. A CSV table, a Markdown preview, an
+ * event-stream reader, a hex dump, a PDF, a font specimen and an archive listing are each
+ * one endpoint in a hundred, and each drags its own hand-rolled parser in behind it.
+ *
+ * `.then(m => ({ default: … }))` because everything in this directory is a named export
+ * and `lazy` takes a default; adding a default export to seven files to satisfy the API
+ * would be the tail wagging the dog.
+ *
+ * `fallback={null}` throughout: the chunk comes off the embedded filesystem, so the wait
+ * is a frame, and a spinner that flashes for one frame reads worse than nothing.
+ */
+const ArchiveBody = lazy(() => import('./ArchiveBody').then(m => ({ default: m.ArchiveBody })))
+const CsvTable = lazy(() => import('./CsvTable').then(m => ({ default: m.CsvTable })))
+const FontBody = lazy(() => import('./FontBody').then(m => ({ default: m.FontBody })))
+const HexBody = lazy(() => import('./HexBody').then(m => ({ default: m.HexBody })))
+const MarkdownPreview = lazy(() => import('./MarkdownPreview').then(m => ({ default: m.MarkdownPreview })))
+const PdfBody = lazy(() => import('./PdfBody').then(m => ({ default: m.PdfBody })))
+const SseBody = lazy(() => import('./SseBody').then(m => ({ default: m.SseBody })))
 
 /** Mirrors maxTextBytes in internal/httpexec — only ever used to word the notice. */
 const BODY_LIMIT = 5 * 1024 * 1024
@@ -66,7 +84,10 @@ export function BodyPanel({
   return (
     <>
       <Notices response={response} formatFailed={formatFailed} />
-      {hex ? <HexBody response={response} /> : <Viewer response={response} language={language} mode={mode} text={text} wrap={wrap} match={match} />}
+      {/* One boundary for both switches below, since only the rare branches suspend. */}
+      <Suspense fallback={null}>
+        {hex ? <HexBody response={response} /> : <Viewer response={response} language={language} mode={mode} text={text} wrap={wrap} match={match} />}
+      </Suspense>
     </>
   )
 }

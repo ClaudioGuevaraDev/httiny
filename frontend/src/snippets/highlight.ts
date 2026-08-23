@@ -10,7 +10,7 @@ import { python } from '@codemirror/legacy-modes/mode/python'
 import { ruby } from '@codemirror/legacy-modes/mode/ruby'
 import { rust } from '@codemirror/legacy-modes/mode/rust'
 import { shell } from '@codemirror/legacy-modes/mode/shell'
-import type { SnippetMode } from './index'
+import type { SnippetMode } from './targets'
 
 /**
  * Highlighting per snippet mode.

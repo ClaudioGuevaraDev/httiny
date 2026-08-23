@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Call } from '@wailsio/runtime'
 import { environmentFor } from './environments'
-import { fromResult, type Wire } from './snippets'
+import { fromResult, type Wire } from './snippets/types'
 import { useAppStore } from './store'
 import type { RequestDocument } from './types'
 import { wireFor } from './wire'

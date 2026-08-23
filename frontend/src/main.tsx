@@ -9,11 +9,12 @@ import { initTheme } from './theme'
 import { checkForUpdate } from './updates'
 import { initZoom } from './zoom'
 // Self-hosted: the app is an offline desktop binary and cannot fetch webfonts at
-// runtime. Imported here rather than through a CSS @import so Vite resolves the
-// bare specifiers and rewrites the .woff2 asset URLs deterministically. Both must
-// come before styles.css so the cascade order stays predictable.
-import '@fontsource-variable/ibm-plex-sans'
-import '@fontsource-variable/jetbrains-mono'
+// runtime. The two `@fontsource-variable` packages used to be imported here as whole
+// families; they now come in through `styles/fonts.css`, which declares only the latin
+// subsets the app's two locales can reach. Vite resolves the bare specifiers in a
+// stylesheet's `url()` just as it does in an import, so nothing about asset hashing
+// changes — see that file for why the other eight subsets were dead weight in a binary
+// rather than unfetched bytes in a browser.
 import './styles.css'
 
 /**

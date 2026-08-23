@@ -1,4 +1,7 @@
 @import 'tailwindcss';
+/* Before everything else, so the cascade order stays predictable — the reason the two
+ * fontsource packages used to be imported at the top of `main.tsx`. */
+@import './styles/fonts.css';
 @import './styles/theme.css';
 @import './styles/theme-light.css';
 @import './styles/base.css';

@@ -1,0 +1,60 @@
+/* Self-hosted webfonts, latin subsets only.
+ *
+ * This replaces `import '@fontsource-variable/ibm-plex-sans'` in `main.tsx`. That entry
+ * emits six `@font-face` rules per family — cyrillic, cyrillic-ext, greek, latin,
+ * latin-ext, vietnamese — and the app ships in English and Spanish. In a browser the
+ * other four would simply never be fetched, because `unicode-range` gates the download;
+ * in a Wails app every asset is embedded in the binary with `//go:embed`, so all twelve
+ * files shipped in the installer and eight of them could never be reached. That is
+ * ~114 KB of the download and of the on-disk footprint, for glyphs no string in the app
+ * can ask for.
+ *
+ * Declared by hand rather than through a subset entry point because the package has none:
+ * its `exports` map offers whole-family CSS per axis, plus `./files/*.woff2`, which is
+ * what these `url()`s resolve through. Vite rewrites them to hashed asset paths.
+ *
+ * The rules are copied verbatim from the package's own `index.css` — same weight ranges,
+ * same `unicode-range`s, same `font-display` — so adding a locale back is a matter of
+ * pasting the two blocks for its subset from `node_modules`, and nothing else changes.
+ * They must be imported before the rest of the cascade, which `styles.css` does.
+ */
+
+@font-face {
+  font-family: 'IBM Plex Sans Variable';
+  font-style: normal;
+  font-display: swap;
+  font-weight: 100 700;
+  src: url('@fontsource-variable/ibm-plex-sans/files/ibm-plex-sans-latin-wght-normal.woff2') format('woff2-variations');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193,
+    U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
+@font-face {
+  font-family: 'IBM Plex Sans Variable';
+  font-style: normal;
+  font-display: swap;
+  font-weight: 100 700;
+  src: url('@fontsource-variable/ibm-plex-sans/files/ibm-plex-sans-latin-ext-wght-normal.woff2') format('woff2-variations');
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020,
+    U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+
+@font-face {
+  font-family: 'JetBrains Mono Variable';
+  font-style: normal;
+  font-display: swap;
+  font-weight: 100 800;
+  src: url('@fontsource-variable/jetbrains-mono/files/jetbrains-mono-latin-wght-normal.woff2') format('woff2-variations');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193,
+    U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
+@font-face {
+  font-family: 'JetBrains Mono Variable';
+  font-style: normal;
+  font-display: swap;
+  font-weight: 100 800;
+  src: url('@fontsource-variable/jetbrains-mono/files/jetbrains-mono-latin-ext-wght-normal.woff2') format('woff2-variations');
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020,
+    U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}

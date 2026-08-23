@@ -2,7 +2,8 @@ import { HTTPService } from '../bindings/github.com/ClaudioGuevaraDev/httiny/int
 import type { WireResult } from '../bindings/github.com/ClaudioGuevaraDev/httiny/internal/httpexec'
 import { resolveFor } from './environments'
 import { toRequestDTO } from './requestDTO'
-import { fromResult, snippetFor } from './snippets'
+import { fromResult } from './snippets/types'
+import type { SnippetTarget } from './snippets/targets'
 import type { RequestDocument } from './types'
 
 /**
@@ -27,9 +28,14 @@ export const wireFor = (request: RequestDocument): Promise<WireResult> => HTTPSe
  * Secrets are **not** redacted here. The point of the shortcut is a snippet that runs when
  * pasted, and the toggle that hides them is a deliberate act taken in the modal.
  */
-export const copySnippet = async (request: RequestDocument, target: Parameters<typeof snippetFor>[0]): Promise<void> => {
+export const copySnippet = async (request: RequestDocument, target: SnippetTarget): Promise<void> => {
   try {
-    const answer = await wireFor(request)
+    // Imported here rather than at the top of the file, and that is the last edge holding
+    // the snippet generators in the startup chunk: `useCommands` imports this module for
+    // the palette's "Copy as curl", so a static import made all eleven of them — and the
+    // nine grammars `highlight.ts` pulls in — part of the first paint for everyone who
+    // never opens the code view. This function was already async, so it costs nothing.
+    const [{ snippetFor }, answer] = await Promise.all([import('./snippets'), wireFor(request)])
     if (!answer.ok) return
     await navigator.clipboard.writeText(snippetFor(target, fromResult(answer), false))
   } catch (error) {
