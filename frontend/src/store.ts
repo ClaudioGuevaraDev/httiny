@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 import { translate } from './i18n'
 import { DEFAULT_BODY_VIEW } from './responseBody'
+import type { PreparedImport } from './workspaceFile'
 import { DEFAULT_SNIPPET_TARGET, type SnippetTarget } from './snippets'
 import type {
   BodyLanguage,
@@ -10,6 +11,7 @@ import type {
   Environment,
   EnvironmentVariable,
   HttpMethod,
+  ImportRejection,
   KeyValueRow,
   Locale,
   RequestDocument,
@@ -274,6 +276,16 @@ interface AppState {
    */
   confirm: ConfirmIntent | null
 
+  /**
+   * Why the last import was refused, or `null`.
+   *
+   * In the store rather than in the panel because three surfaces start an import — the
+   * Storage panel, the sidebar's empty state and the command palette — and only one of
+   * them has anywhere to print the reason. A refusal raised from the other two opens
+   * Settings on Storage so the sentence has a home instead of vanishing.
+   */
+  importRejection: ImportRejection | null
+
   openRequest: (id: string) => void
   closeRequest: (id: string) => void
   setActive: (id: string) => void
@@ -305,6 +317,8 @@ interface AppState {
   setTheme: (theme: ThemePreference) => void
   setLanguage: (language: Locale) => void
   resetSettings: () => void
+  setImportRejection: (reason: ImportRejection | null) => void
+  replaceWorkspace: (prepared: PreparedImport) => void
   setDefaultBodyLanguage: (language: BodyLanguage | null) => void
   setDefaultRedactSecrets: (redact: boolean) => void
   openPalette: (seed?: string) => void
@@ -677,6 +691,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   // Not one of them: hiding the sidebar is a workspace gesture, not a setting.
   sidebarCollapsed: false,
   responseSearch: DEFAULT_RESPONSE_SEARCH,
+  importRejection: null,
   update: { state: 'idle' },
   updateDismissed: false,
   paletteOpen: false,
@@ -985,6 +1000,61 @@ export const useAppStore = create<AppState>((set, get) => ({
   // `App.tsx` reads the layout fields at render, and the autosave subscriber rewrites
   // `ui.json`. Nothing here has to know about any of that.
   resetSettings: () => set(SETTINGS_DEFAULTS),
+  setImportRejection: importRejection => set({ importRejection }),
+
+  /**
+   * Swaps the whole workspace for an imported one, in a single `setState`.
+   *
+   * One call and not `hydrate`'s two. That split exists because the autosave subscriber is
+   * installed *between* them and has to observe the `revealPatch` repair to write it; here
+   * the subscriber is already listening, so a second call would only buy a second
+   * notification pass, a second whole-workspace `JSON.stringify`, a second credential
+   * signature, and one React commit in which `activeId` names a request in a collection
+   * the rail is not showing.
+   *
+   * Nothing is written to disk from here. The autosave subscriber sees this transition and
+   * writes `workspace.json`, `ui.json` and the credential store on its ordinary debounce —
+   * and the credential sweep comes out right for free, because `scheduleSecrets` unions
+   * the previous save's ids into `keep`, so what was replaced is deleted. The values
+   * themselves were resolved before the confirmation; see `prepareImport`.
+   *
+   * The four maps below are cleared rather than left to be pruned. Every one of them is
+   * keyed by request id, and on an import of a workspace exported from *this* machine the
+   * ids collide exactly — which is the case that turns a stale entry from litter into a
+   * response, a panel or a body view silently reattached to a different request.
+   * `deleteNode` already prunes the same set; this is that rule at workspace scale.
+   */
+  replaceWorkspace: prepared => {
+    // `revealPatch` returns the tree as well — it may rebuild it to expand the ancestors
+    // of the restored tab — so it is the only source of `tree` here, spread after the
+    // layout it has to win over.
+    const reveal = revealPatch(prepared.tree, prepared.layout.activeId, prepared.layout.selectedNodeId, prepared.layout.activeCollectionId)
+    set({
+      documents: prepared.documents,
+      // A spread, for the reason `hydrate` gives: `PrefsState` is defined as "everything
+      // `readPrefs` returns is store state", so a preference added later reaches an
+      // imported workspace by existing rather than by someone remembering a line here.
+      // It also means theme, language and zoom follow the file — their `init*`
+      // subscribers apply them live, with no restart.
+      ...prepared.layout,
+      responses: {},
+      requestPanels: {},
+      responsePanels: {},
+      bodyViews: {},
+      responseSearch: DEFAULT_RESPONSE_SEARCH,
+      // Addressed by collection id, so on a re-import the id survives and the open editor
+      // would quietly retarget onto the imported collection's variables — the drift the
+      // id-rather-than-boolean shape exists to prevent.
+      environmentsFor: null,
+      // Both look at the active request, which can now be `null`; `useWire(undefined)`
+      // would sit at `loading` for as long as the modal stayed open.
+      codeOpen: false,
+      confirm: null,
+      // Last, so it reconciles the rail and the active tab against the tree that just
+      // arrived — the invariant every other writer of `activeId` holds.
+      ...reveal,
+    })
+  },
   openPalette: (seed = '') => set({ paletteOpen: true, paletteSeed: seed }),
   closePalette: () => set({ paletteOpen: false, paletteSeed: '' }),
   // The query and its two options survive a close, so reopening with Ctrl+F puts back
@@ -1004,7 +1074,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   dismissUpdate: () => set({ updateDismissed: true }),
   reopenUpdate: () => set({ updateDismissed: false }),
   openSettings: () => set({ settingsOpen: true }),
-  closeSettings: () => set({ settingsOpen: false }),
+  closeSettings: () => set({ settingsOpen: false, importRejection: null }),
   openEnvironments: collectionId => set({ environmentsFor: collectionId }),
   closeEnvironments: () => set({ environmentsFor: null }),
   openCode: () => set({ codeOpen: true }),
@@ -1095,6 +1165,11 @@ export const useAppStore = create<AppState>((set, get) => ({
         return
       case 'resetSettings':
         get().resetSettings()
+        return
+      case 'importWorkspace':
+        // Everything expensive — the file dialog, the readers, the credential store — ran
+        // before the question was asked, so all that is left is the swap.
+        get().replaceWorkspace(intent.prepared)
         return
       default: {
         // Not reachable: the switch above covers ConfirmIntent. This exists so that

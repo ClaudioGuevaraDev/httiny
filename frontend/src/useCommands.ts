@@ -7,6 +7,7 @@ import { cancelRequest, runRequest, saveResponseBody, toggleRequest } from './re
 import { shortcuts } from './shortcuts'
 import { methodOptions, shownCollection, useAppStore } from './store'
 import { isByteFormat } from './types'
+import { exportWorkspace, startImport } from './transfer'
 import { copySnippet } from './wire'
 
 const EMPTY: Command[] = []
@@ -139,6 +140,21 @@ export function useCommands(enabled: boolean): Command[] {
       shortcuts.toggleSplit,
     )
     action('settings', 'command.settings.title', 'command.settings.keywords', () => useAppStore.getState().openSettings(), shortcuts.settings)
+
+    // Workspace-wide, so they sit beside Settings rather than in the per-request block —
+    // and unguarded by `activeId` for the same reason. The Storage panel disables both
+    // when persistence is not ready; here the calls simply report a failure the way any
+    // other refused dialog does, since the palette has nowhere to draw a disabled row.
+    //
+    // Export from here never carries credentials. The opt-in is a deliberate act with a
+    // warning attached, and a palette row is the opposite of that — it is one keystroke
+    // and a title.
+    action('export-workspace', 'command.exportWorkspace.title', 'command.exportWorkspace.keywords', () => {
+      void exportWorkspace(t('transfer.export.dialog'), false)
+    })
+    action('import-workspace', 'command.importWorkspace.title', 'command.importWorkspace.keywords', () => {
+      void startImport(t('transfer.import.dialog'))
+    })
 
     // Scoped to the collection the sidebar is showing, because that is the collection whose
     // environments are on screen — and the only one the palette could name without

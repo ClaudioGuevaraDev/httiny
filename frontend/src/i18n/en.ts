@@ -39,6 +39,10 @@ export const en = {
   'sidebar.noCollections.title': 'No collections yet',
   'sidebar.noCollections.desc': 'Collections group your requests. Create one to get started.',
   'sidebar.noCollections.action': 'New collection',
+  // Secondary, beside "New collection": this placeholder is the one moment somebody with
+  // a workspace elsewhere is looking at an empty app, and Settings is not where they
+  // would think to look for the way out.
+  'sidebar.noCollections.import': 'Import a workspace',
   'sidebar.empty.title': 'Nothing here yet',
   'sidebar.empty.desc': '“{name}” has no requests. Add one to send your first call.',
   'sidebar.empty.newRequest': 'New request',
@@ -70,7 +74,7 @@ export const en = {
   'editor.empty.title': 'No request open',
   'editor.empty.desc': 'Open something from the sidebar, or start a new request.',
   'editor.empty.newRequest': 'New request',
-  'editor.empty.search': 'Search requests',
+  'editor.empty.import': 'Import a workspace',
   'editor.method': 'HTTP method',
   'editor.url': 'Request URL',
   'editor.code.title': 'Show the code for this request ({keys})',
@@ -469,6 +473,10 @@ export const en = {
   'command.zoomReset.keywords': 'zoom reset actual size 100',
   'command.settings.title': 'Open settings',
   'command.settings.keywords': 'preferences options theme appearance dark light storage language',
+  'command.exportWorkspace.title': 'Export configuration',
+  'command.exportWorkspace.keywords': 'export backup save workspace collections file download share',
+  'command.importWorkspace.title': 'Import configuration',
+  'command.importWorkspace.keywords': 'import restore load workspace collections file open replace',
   'command.setMethod.title': 'Set method to {method}',
   'command.setMethod.keywords': 'method {method}',
 
@@ -499,6 +507,31 @@ export const en = {
   'error.UNKNOWN.title': 'Request failed',
   'error.UNKNOWN.detail': 'Something went wrong before a response arrived.',
 
+  // ── Import and export ────────────────────────────────────────────────────────
+  //
+  // Its own block rather than more `settings.*`: three surfaces raise these — the Storage
+  // panel, the sidebar's empty state and the command palette — so the copy cannot belong
+  // to any one of them.
+  'transfer.export.dialog': 'Export HTTiny configuration',
+  'transfer.import.dialog': 'Import HTTiny configuration',
+  'transfer.reject.malformed': 'This is not an HTTiny export, or the file is damaged.',
+  'transfer.reject.newerApp': 'This file was written by a newer version of HTTiny. Update, then import it.',
+  // Distinct from the one above on purpose: the envelope was understood and the workspace
+  // inside it was not, which is a different thing to have gone wrong and a different fix.
+  'transfer.reject.newerWorkspace': 'This file holds a workspace from a newer version of HTTiny. Update, then import it.',
+  'transfer.reject.unreadable': 'The file could not be opened.',
+  'transfer.confirm.title.empty': 'Replace this workspace with an empty one?',
+  'transfer.confirm.title.one': 'Replace this workspace with the {count} collection in the file?',
+  'transfer.confirm.title.other': 'Replace this workspace with the {count} collections in the file?',
+  'transfer.confirm.detail': 'Every collection, request and environment here is replaced, and the interface settings follow the file too.',
+  // Only when the file actually carries credentials. Saying it unconditionally would
+  // teach people to ignore it.
+  'transfer.confirm.detail.secrets': 'The file carries credentials, which replace the ones stored for this workspace.',
+  // Said only in the state where it is true — a read that failed earlier switches the
+  // destructive half of the credential save off for the whole session.
+  'transfer.confirm.detail.stranded': 'The credential store could not be read this session, so the tokens being replaced cannot be removed from it.',
+  'transfer.confirm.action': 'Replace workspace',
+
   // ── Settings ─────────────────────────────────────────────────────────────────
   'settings.title': 'Settings',
   'settings.sections': 'Settings sections',
@@ -515,8 +548,31 @@ export const en = {
   // preference should have to wonder whether their requests went with it.
   'settings.reset.confirm': 'Restore every setting to its default?',
   'settings.reset.detail': 'This includes the interface language. Nothing in your workspace changes.',
-  'settings.storage.title': 'Nothing here yet',
-  'settings.storage.desc': 'Storage settings will live in this panel.',
+  'settings.storage.export.label': 'Export configuration',
+  'settings.storage.export.desc': 'Write your collections, environments and interface preferences to a file you can keep or move to another machine.',
+  // Not "Export": the row above it already says that, so the button would only repeat
+  // its own label. It names the next step instead, the way `editor.body.file.choose`
+  // does for the attachment picker.
+  'settings.storage.export.action': 'Save file',
+  'settings.storage.export.saved': 'Saved',
+  'settings.storage.export.failed': 'Could not save',
+  'settings.storage.secrets.label': 'Include secrets',
+  // Two descriptions rather than one with a warning bolted on, because the two states are
+  // genuinely different files. Off is the promise `workspace.json` already keeps.
+  'settings.storage.secrets.desc.off': 'Tokens, passwords and locked variables stay in the credential store. The file is safe to copy, send or attach to a bug report.',
+  'settings.storage.secrets.desc.on': 'Tokens, passwords and locked variables go into the file as plain text. Anyone who opens it can read them.',
+  'settings.storage.import.label': 'Import configuration',
+  'settings.storage.import.desc': 'Read a file exported from HTTiny. It replaces every collection, request and environment in this workspace.',
+  'settings.storage.import.action': 'Choose file',
+  'settings.storage.location.label': 'Where it is stored',
+  'settings.storage.location.desc': 'The folder holding workspace.json and ui.json.',
+  'settings.storage.location.copy': 'Copy the folder path',
+  'settings.storage.quarantine.label': 'Set aside on startup',
+  // The one place this is ever said. Go names the file it moved; without this the user
+  // sees an empty workspace and a healthy-looking footer.
+  'settings.storage.quarantine.desc': 'A file could not be read and was moved aside rather than deleted, so this workspace started empty. The original is still there.',
+  'settings.storage.unavailable.browser': 'Only the desktop app can read and write files.',
+  'settings.storage.unavailable.newer': 'This workspace was written by a newer version of HTTiny and is read-only until you update.',
   'settings.theme.label': 'Theme',
   'settings.theme.system': 'System',
   'settings.theme.light': 'Light',

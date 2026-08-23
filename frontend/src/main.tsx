@@ -4,7 +4,7 @@ import { App } from './App'
 import { initCodeFontSize } from './codeFont'
 import { initLanguage } from './language'
 import { hydrate } from './persistence'
-import { installBodyRelease } from './requestRunner'
+import { installBodyRelease, installOrphanAbort } from './requestRunner'
 import { initTheme } from './theme'
 import { checkForUpdate } from './updates'
 import { initZoom } from './zoom'
@@ -42,6 +42,7 @@ void hydrate().then(() => {
   // store subscriber, and it goes here rather than at module scope so that importing
   // `requestRunner` stays free of side effects.
   installBodyRelease()
+  installOrphanAbort()
   createRoot(document.getElementById('root')!).render(
     <StrictMode>
       <App />

@@ -1,5 +1,5 @@
 import { useEffect, useRef, type ReactNode } from 'react'
-import { RotateCcw, Trash2 } from 'lucide-react'
+import { Import, RotateCcw, Trash2 } from 'lucide-react'
 import { useT } from '../language'
 import { collectionsIn, findNode, requestIdsIn, useAppStore } from '../store'
 import type { ConfirmIntent, TreeNode } from '../types'
@@ -147,6 +147,30 @@ function useCopy(intent: ConfirmIntent | null, node: TreeNode | null, environmen
         // of how the two differ.
         action: t('settings.reset.label'),
       }
+    case 'importWorkspace': {
+      const { collections, secrets, stranded } = intent.prepared.summary
+      return {
+        // Accent, not danger — the line this app draws is that red means destroyed, and
+        // an import is a replacement rather than a deletion: something arrives in place
+        // of what was here. That puts it beside `resetSettings` and leaves red to the two
+        // cases that only take away, which is a cleaner split than treating every
+        // wide-reaching act as an alarm.
+        tone: 'accent',
+        icon: <Import size={18} />,
+        // Whole questions per plural category, the rule `deleteNode` states: Spanish puts
+        // the count inside an agreeing noun phrase and no concatenation produces that.
+        // Zero gets its own message, the way `deleteNode` gives one to an empty folder:
+        // neither language has a CLDR `zero` category to select, so the plural would
+        // otherwise read "the 0 collections".
+        title: collections === 0 ? t('transfer.confirm.title.empty') : plural('transfer.confirm.title', collections),
+        // Three sentences, and the last two only when they are true. A warning printed
+        // unconditionally is a warning nobody reads.
+        detail: [t('transfer.confirm.detail'), secrets && t('transfer.confirm.detail.secrets'), stranded && t('transfer.confirm.detail.stranded')]
+          .filter(Boolean)
+          .join(' '),
+        action: t('transfer.confirm.action'),
+      }
+    }
     default: {
       // Not reachable: the switch above covers ConfirmIntent. This exists so that adding
       // a member without copy fails to compile.

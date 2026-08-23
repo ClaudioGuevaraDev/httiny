@@ -1,7 +1,9 @@
 import { Service as WorkspaceService } from '../bindings/github.com/ClaudioGuevaraDev/httiny/internal/workspace'
+import type { Secret } from '../bindings/github.com/ClaudioGuevaraDev/httiny/internal/workspace/models'
 import { collectionsIn, revealPatch, useAppStore } from './store'
 import type { RequestDocument, TreeNode } from './types'
 import type { WorkspaceState } from './workspaceFile'
+import type { LoadedWorkspace, PreparedImport } from './workspaceFile'
 import {
   PREFS_VERSION,
   WORKSPACE_VERSION,
@@ -76,7 +78,7 @@ const workspaceWriter = createWriter(payload => WorkspaceService.SaveWorkspace(p
 const prefsWriter = createWriter(payload => WorkspaceService.SavePrefs(payload, PREFS_VERSION), PREFS_DEBOUNCE_MS, 0)
 
 /** Requests whose credentials belong in the OS credential store. */
-const secretsOf = (documents: Record<string, RequestDocument>) =>
+export const secretsOf = (documents: Record<string, RequestDocument>) =>
   Object.values(documents)
     .filter(doc => doc.auth.type !== 'none' && (doc.auth.token || doc.auth.password))
     .map(doc => ({ id: doc.id, token: doc.auth.token, password: doc.auth.password }))
@@ -102,7 +104,7 @@ const secretsOf = (documents: Record<string, RequestDocument>) =>
  * A `Map`, so two rows typed with the same key write one entry instead of racing. Last
  * wins, which is the rule `variableMap` applies to the same collision.
  */
-const environmentSecretsOf = (tree: TreeNode[]) => {
+export const environmentSecretsOf = (tree: TreeNode[]) => {
   const entries = new Map<string, { id: string; token: string; password: string }>()
   for (const collection of collectionsIn(tree)) {
     for (const env of collection.environments) {
@@ -290,6 +292,79 @@ const withTimeout = <T,>(promise: Promise<T>, ms: number): Promise<T> =>
   Promise.race([promise, new Promise<T>((_, reject) => setTimeout(() => reject(new Error('timed out')), ms))])
 
 /**
+ * Every credential the workspace currently holds, as one list.
+ *
+ * The export's opt-in is the only caller. It lives here rather than in `transfer.ts`
+ * because these are the same two functions the autosave path uses, and a second pair
+ * would be a second answer to "what counts as a secret".
+ */
+export const exportSecrets = (documents: Record<string, RequestDocument>, tree: TreeNode[]): Secret[] => [
+  ...secretsOf(documents),
+  ...environmentSecretsOf(tree),
+]
+
+/**
+ * Every credential-store key the locked variables in a tree occupy.
+ *
+ * Built from `environmentSecretKey` rather than by parsing an id back apart, so a
+ * document whose id was hand-edited to start with `env:` cannot claim a variable's value.
+ */
+export const environmentKeysIn = (tree: TreeNode[]): Set<string> => {
+  const keys = new Set<string>()
+  for (const collection of collectionsIn(tree)) {
+    for (const env of collection.environments) {
+      for (const variable of env.variables) {
+        const key = variable.key.trim()
+        if (variable.secret && key) keys.add(environmentSecretKey(collection.id, env.id, key))
+      }
+    }
+  }
+  return keys
+}
+
+/**
+ * Merges credentials back onto a freshly-read workspace, in place.
+ *
+ * Extracted from `hydrate` because the import path needs exactly this and a second copy
+ * would drift with nothing to catch it — the failure mode CLAUDE.md names for
+ * `TEXT_FORMATS` against `byteBacked`.
+ *
+ * `variableKeys` decides which ids are ours, and it is passed in rather than recomputed
+ * so both callers use the set they already built.
+ */
+function applySecrets(loaded: LoadedWorkspace, secrets: readonly Secret[], variableKeys: ReadonlySet<string>): void {
+  const values = new Map<string, string>()
+  for (const secret of secrets) {
+    // Variables first: those ids are ours and a document cannot shadow one.
+    if (variableKeys.has(secret.id)) {
+      values.set(secret.id, secret.token)
+      continue
+    }
+    const doc = loaded.documents[secret.id]
+    if (doc) loaded.documents[secret.id] = { ...doc, auth: { ...doc.auth, token: secret.token, password: secret.password } }
+  }
+  if (!values.size) return
+
+  // A root-level `map`, not `mapTree`: collections are always roots, and rebuilding every
+  // node would leave nothing with a shared identity for `revealPatch` and the autosave
+  // guard to compare against.
+  loaded.tree = loaded.tree.map(node =>
+    node.type !== 'collection'
+      ? node
+      : {
+          ...node,
+          environments: node.environments.map(env => ({
+            ...env,
+            variables: env.variables.map(variable => {
+              const stored = variable.secret ? values.get(environmentSecretKey(node.id, env.id, variable.key.trim())) : undefined
+              return stored === undefined ? variable : { ...variable, value: stored }
+            }),
+          })),
+        },
+  )
+}
+
+/**
  * Loads the workspace before the first render.
  *
  * Rendering afterwards is what keeps the first paint from being an empty workspace
@@ -322,54 +397,13 @@ export async function hydrate(): Promise<void> {
     // Credentials come back from the OS store, keyed by request id, so a workspace
     // copied to another machine keeps its requests and simply has no tokens.
     const withAuth = Object.values(loaded.documents).filter(doc => doc.auth.type !== 'none')
-
-    // Locked variables ride along in the same call — one round trip on the startup path,
-    // which is why `LoadSecrets` takes a list at all. The key set is built from
-    // `environmentSecretKey` rather than by parsing an id back apart, so a document whose
-    // id was hand-edited to start with `env:` cannot claim a variable's value.
-    const variableKeys = new Set<string>()
-    for (const collection of collectionsIn(loaded.tree)) {
-      for (const env of collection.environments) {
-        for (const variable of env.variables) {
-          const key = variable.key.trim()
-          if (variable.secret && key) variableKeys.add(environmentSecretKey(collection.id, env.id, key))
-        }
-      }
-    }
+    const variableKeys = environmentKeysIn(loaded.tree)
 
     let secretsAvailable = false
     if (withAuth.length || variableKeys.size) {
       const result = await WorkspaceService.LoadSecrets([...withAuth.map(doc => doc.id), ...variableKeys])
       secretsAvailable = result.available
-      const values = new Map<string, string>()
-      for (const secret of result.secrets ?? []) {
-        // Variables first: those ids are ours and a document cannot shadow one.
-        if (variableKeys.has(secret.id)) {
-          values.set(secret.id, secret.token)
-          continue
-        }
-        const doc = loaded.documents[secret.id]
-        if (doc) loaded.documents[secret.id] = { ...doc, auth: { ...doc.auth, token: secret.token, password: secret.password } }
-      }
-      if (values.size) {
-        // A root-level `map`, not `mapTree`: collections are always roots, and rebuilding
-        // every node would leave nothing with a shared identity for `revealPatch` and the
-        // autosave guard to compare against.
-        loaded.tree = loaded.tree.map(node =>
-          node.type !== 'collection'
-            ? node
-            : {
-                ...node,
-                environments: node.environments.map(env => ({
-                  ...env,
-                  variables: env.variables.map(variable => {
-                    const stored = variable.secret ? values.get(environmentSecretKey(node.id, env.id, variable.key.trim())) : undefined
-                    return stored === undefined ? variable : { ...variable, value: stored }
-                  }),
-                })),
-              },
-        )
-      }
+      applySecrets(loaded, result.secrets ?? [], variableKeys)
       if (result.error) {
         // Not just noise: an entry that could not be read loaded empty, and the next
         // save must not delete it for looking that way. See `secretsReadFailed`.
@@ -461,4 +495,73 @@ export async function hydrate(): Promise<void> {
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'hidden') flushNow()
   })
+}
+
+/**
+ * Reads an import through the same validators `hydrate` uses and resolves its
+ * credentials, so the result can be committed to the store in one `setState`.
+ *
+ * Deliberately **not** `hydrate` again: a second call would install a second autosave
+ * subscriber, so every later change would be serialised and written twice, and would
+ * re-add the `beforeunload` and `visibilitychange` listeners. "Just call hydrate again"
+ * is the obvious refactor and it is wrong.
+ *
+ * `secrets` distinguishes three cases, and the difference is load-bearing:
+ *
+ * - **`undefined`** — the file was exported without credentials, so every token in it is
+ *   the empty string `readDocument` and `readVariables` force. Committing that as-is
+ *   would have the next autosave name every imported id in `keep` while writing none of
+ *   them, and `SaveSecrets` deletes exactly that set. On a re-import of your own backup
+ *   those ids are the *live* ones, and `go-keyring` cannot enumerate a store, so the
+ *   tokens would be gone for good. So the store is read back for the incoming ids and
+ *   whatever still exists is merged on: restoring your own export becomes idempotent,
+ *   and only what genuinely no longer exists is swept.
+ * - **`[]`** — credentials were included and there were none. Nothing is read back;
+ *   the file is the whole answer.
+ * - **a list** — the file is authoritative, for the same reason.
+ */
+export async function prepareImport(
+  workspacePayload: unknown,
+  prefsPayload: unknown,
+  secrets: readonly Secret[] | undefined,
+): Promise<PreparedImport> {
+  const collapsed = readCollapsed(prefsPayload)
+  const loaded: LoadedWorkspace = readWorkspace(workspacePayload, collapsed)
+  const variableKeys = environmentKeysIn(loaded.tree)
+
+  if (secrets) {
+    applySecrets(loaded, secrets, variableKeys)
+  } else {
+    const withAuth = Object.values(loaded.documents).filter(doc => doc.auth.type !== 'none')
+    if (withAuth.length || variableKeys.size) {
+      const result = await WorkspaceService.LoadSecrets([...withAuth.map(doc => doc.id), ...variableKeys])
+      applySecrets(loaded, result.secrets ?? [], variableKeys)
+      useAppStore.getState().setSecretsAvailable(result.available)
+      if (result.error) {
+        // The same rule the load path follows: an entry that could not be read looks
+        // empty, and the next save must not delete it for looking that way.
+        secretsReadFailed = true
+        console.warn('[persistence] credential store:', result.error)
+      }
+    }
+  }
+
+  return {
+    tree: loaded.tree,
+    documents: loaded.documents,
+    // `readPrefs` needs the imported tree and documents, which is why it runs last: it
+    // validates `tabs`, `activeId`, `selectedNodeId` and `activeCollectionId` against
+    // them and drops whatever no longer resolves.
+    layout: readPrefs(prefsPayload, loaded.documents, loaded.tree),
+    summary: {
+      collections: collectionsIn(loaded.tree).length,
+      requests: Object.keys(loaded.documents).length,
+      // Whether the **file** brought credentials, not whether the result has any. The
+      // recovery branch above fills tokens in from this machine's own store, and telling
+      // someone the file carries credentials when it does not would be worse than saying
+      // nothing.
+      secrets: (secrets?.length ?? 0) > 0,
+      stranded: secretsReadFailed,
+    },
+  }
 }

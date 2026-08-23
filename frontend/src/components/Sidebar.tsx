@@ -7,6 +7,7 @@ import type { CollectionNode } from '../types'
 import { useTreeNavigation } from '../useTreeNavigation'
 import { shortcuts } from '../shortcuts'
 import { COLLECTION_PANEL_ID, collectionTabId } from '../collections'
+import { startImport } from '../transfer'
 import { EnvironmentPicker } from './EnvironmentPicker'
 import { CollectionRail } from './CollectionRail'
 import { MethodChip } from './MethodChip'
@@ -256,6 +257,15 @@ export function Sidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle:
             <div className="tree-scroll">
               <Placeholder icon={<Boxes size={20} />} title={t('sidebar.noCollections.title')} description={t('sidebar.noCollections.desc')}>
                 <PlaceholderAction onClick={() => addNode('collection')}>{t('sidebar.noCollections.action')}</PlaceholderAction>
+                {/* The second way out of an empty app, and the one Settings would hide.
+                    Somebody who already has a workspace somewhere is looking at this
+                    screen precisely because they do not want to start from nothing.
+                    It opens the same flow the Storage panel does, confirmation and all —
+                    there is nothing to replace here, but the question still names what
+                    arrives. */}
+                <PlaceholderAction variant="secondary" onClick={() => void startImport(t('transfer.import.dialog'))}>
+                  {t('sidebar.noCollections.import')}
+                </PlaceholderAction>
               </Placeholder>
             </div>
           ) : rows.length === 0 ? (

@@ -1,10 +1,11 @@
-import { Code2, Search, Send, Square } from 'lucide-react'
+import { Code2, Send, Square, Upload } from 'lucide-react'
 import type { MessageKey } from '../i18n'
 import { useT } from '../language'
 import { toggleRequest } from '../requestRunner'
 import { shortcutHint, shortcuts } from '../shortcuts'
 import { DEFAULT_REQUEST_PANEL, freshRow, methodOptions, splitUrl, useAppStore } from '../store'
 import { replaceQuery } from '../template'
+import { startImport } from '../transfer'
 import type { KeyValueRow, RequestDocument } from '../types'
 import { requestTabId, requestUrlFieldId } from '../domIds'
 import { useRovingFocus } from '../useRovingFocus'
@@ -222,7 +223,6 @@ export function RequestEditor() {
   const setRequestPanel = useAppStore(s => s.setRequestPanel)
   const updateDocument = useAppStore(s => s.updateDocument)
   const addNode = useAppStore(s => s.addNode)
-  const openPalette = useAppStore(s => s.openPalette)
   const openCode = useAppStore(s => s.openCode)
   const sending = useAppStore(s => (s.activeId ? s.responses[s.activeId]?.state === 'loading' : false))
   const onPanelKeyDown = useRovingFocus('[role="tab"]')
@@ -242,8 +242,12 @@ export function RequestEditor() {
           <PlaceholderAction shortcut={shortcuts.newRequest} onClick={() => addNode('request')}>
             {t('editor.empty.newRequest')}
           </PlaceholderAction>
-          <PlaceholderAction variant="secondary" shortcut={shortcuts.palette} onClick={() => openPalette('')}>
-            <Search size={13} aria-hidden="true" /> {t('editor.empty.search')}
+          {/* Not "Search requests" any more. This placeholder shows when nothing is open,
+              which for a fresh install means there is nothing to search — and the palette
+              is already a keystroke away and named in the tab strip. Bringing a workspace
+              in is the thing you cannot do from anywhere else on this screen. */}
+          <PlaceholderAction variant="secondary" onClick={() => void startImport(t('transfer.import.dialog'))}>
+            <Upload size={13} aria-hidden="true" /> {t('editor.empty.import')}
           </PlaceholderAction>
         </Placeholder>
       </div>

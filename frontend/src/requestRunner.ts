@@ -102,6 +102,41 @@ export async function saveResponseBody(request: SaveBodyRequest): Promise<{ ok: 
  * Installed from `main.tsx` rather than on import, so the module stays side-effect
  * free and the subscription's lifetime is visible where the rest of the boot is.
  */
+/**
+ * Aborts any in-flight request whose document has gone.
+ *
+ * The sibling of `installBodyRelease` below, and the same construction: a subscriber that
+ * watches one slice and reacts, rather than a call every writer has to remember.
+ *
+ * Without it a send that lands after its request was deleted — or after a whole workspace
+ * was replaced by an import — resolves into `setResponse` for an id nothing owns, which
+ * repopulates `responses` and, for a byte-backed body, re-pins the bytes in Go one tick
+ * after `installBodyRelease` released them. On an import of a workspace that came from
+ * *this* machine the ids collide exactly, so the stale response reattaches to a different
+ * request. `runRequest` also refuses to start while `controllers.has(id)`, so the new
+ * request with that id could not be sent until the old one finished.
+ *
+ * Nothing is written to `responses` here, unlike `cancelRequest`: both of `runRequest`'s
+ * paths already return early on `signal.aborted`, and the document this would report to
+ * no longer exists.
+ *
+ * Scoped to ids that *left* `documents`, and deliberately not to ids whose document
+ * merely changed: that map gets a new identity on every keystroke in the URL bar, so
+ * anything broader would abort the request being typed. The gap it leaves is narrow — an
+ * import of a workspace exported from this machine, landing while a send with a surviving
+ * id is still in flight, shows that response against the imported request of the same id.
+ */
+export function installOrphanAbort(): void {
+  useAppStore.subscribe((state, prev) => {
+    if (state.documents === prev.documents) return
+    for (const [id, controller] of [...controllers]) {
+      if (state.documents[id]) continue
+      controller.abort()
+      controllers.delete(id)
+    }
+  })
+}
+
 export function installBodyRelease(): void {
   useAppStore.subscribe((state, prev) => {
     if (state.responses === prev.responses) return

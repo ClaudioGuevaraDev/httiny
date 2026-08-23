@@ -215,6 +215,38 @@ export interface PrefsFile {
  */
 export type PrefsState = Omit<PrefsFile, 'collapsedNodeIds'>
 
+/**
+ * An import that has been read, repaired and had its credentials resolved, ready to be
+ * committed to the store in one `setState`.
+ *
+ * Here rather than in `types.ts` because it is exactly "what the readers below hand
+ * back": `layout` is `PrefsState`, so a preference added to `PrefsFile` reaches an
+ * imported workspace by existing, the same dividend the `Omit` was defined for.
+ * `types.ts` imports it back with `import type`, which is erased — the only runtime edge
+ * between these two files remains the one that was already there.
+ *
+ * `summary` is carried rather than derived at render time because `ConfirmDialog`'s
+ * `useCopy` resolves copy from small values, not by walking a workspace.
+ */
+export interface PreparedImport {
+  tree: TreeNode[]
+  documents: Record<string, RequestDocument>
+  layout: PrefsState
+  summary: {
+    collections: number
+    requests: number
+    /** Whether the incoming workspace has any credential at all to write. */
+    secrets: boolean
+    /**
+     * Whether the credential store failed to read this session. While it has, the
+     * destructive half of the credential save is off, so the tokens being replaced cannot
+     * be swept — and an id nobody names is an id nobody can delete. The confirmation says
+     * so rather than letting it happen quietly.
+     */
+    stranded: boolean
+  }
+}
+
 // ── Writing ────────────────────────────────────────────────────────────────────
 
 const collapsedIn = (nodes: TreeNode[], out: string[] = []): string[] => {

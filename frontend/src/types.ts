@@ -1,3 +1,5 @@
+import type { PreparedImport } from './workspaceFile'
+
 export type HttpMethod = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE' | 'HEAD' | 'OPTIONS'
 export type TreeNode = CollectionNode | FolderNode | RequestNode
 
@@ -518,10 +520,24 @@ export type UpdateState =
  * A discriminated union on `kind` for the reason `UpdateState` is one: the dialog
  * branches on it exhaustively, so an intent added without copy fails to compile.
  */
+/**
+ * Why an import was refused, as a token rather than a sentence: the copy is resolved at
+ * render so it follows a change of language, the rule `errors.ts` already follows for
+ * failure codes.
+ */
+export type ImportRejection = 'malformed' | 'newer-app' | 'newer-workspace' | 'unreadable'
+
 export type ConfirmIntent =
   | { kind: 'deleteNode'; nodeId: string }
   | { kind: 'deleteEnvironment'; collectionId: string; environmentId: string }
   | { kind: 'resetSettings' }
+  /**
+   * A workspace that has already been read, validated and had its credentials resolved,
+   * waiting for the one confirmation that commits it. Still data by the rule above — a
+   * validated payload is a value, not a callback — and carrying it here rather than
+   * parking it in a module is what stops a dismissed dialog from leaving an import armed.
+   */
+  | { kind: 'importWorkspace'; prepared: PreparedImport }
 
 /**
  * Labels for the filled chips — the sidebar tree, the tab strip and the command palette.

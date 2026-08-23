@@ -7,7 +7,9 @@ export {
 };
 
 export type {
+    ImportResult,
     LoadResult,
     Secret,
-    SecretsResult
+    SecretsResult,
+    TransferResult
 } from "./models.js";

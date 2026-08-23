@@ -1,14 +1,17 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
-import { HardDrive, Minus, Palette, PanelsTopLeft, Plus, RotateCcw, Settings2, X } from 'lucide-react'
+import { AlertTriangle, Check, Copy, Download, HardDrive, Minus, Palette, PanelsTopLeft, Plus, RotateCcw, Settings2, Upload, X } from 'lucide-react'
 import type { MessageKey, PlainMessageKey } from '../i18n'
 import { useT } from '../language'
 import { BODY_LANGUAGES, bodyLanguageLabel } from '../responseBody'
 import { useSystemTheme } from '../theme'
-import type { Locale, ThemePreference } from '../types'
+import type { ImportRejection, Locale, ThemePreference } from '../types'
 import { shortcuts } from '../shortcuts'
 import { CODE_FONT_SIZE, SIDEBAR_WIDTH, SPLIT_RATIO, ZOOM, useAppStore } from '../store'
+import { exportWorkspace, startImport } from '../transfer'
+import { useCopy } from '../useCopy'
 import { useRovingFocus } from '../useRovingFocus'
-import { Placeholder, Shortcut } from './Placeholder'
+import { useSave } from '../useSave'
+import { Shortcut } from './Placeholder'
 import { Select } from './Select'
 
 /**
@@ -107,7 +110,10 @@ export function SettingsModal() {
 
 function SettingsBody({ onDismiss }: { onDismiss: () => void }) {
   const { t } = useT()
-  const [section, setSection] = useState<Section>('general')
+  // Opens on Storage when an import was just refused elsewhere, so the reason is on
+  // screen rather than a tab away. A lazy initialiser rather than an effect: the correct
+  // tab is the one the first paint shows.
+  const [section, setSection] = useState<Section>(() => (useAppStore.getState().importRejection ? 'storage' : 'general'))
   // Vertical, unlike every other tablist in the app: the sections are a column, and
   // the ARIA pattern says the arrow keys have to follow the layout, not the role.
   const onNavKeyDown = useRovingFocus('[role="tab"]', 'vertical')
@@ -208,10 +214,141 @@ function LayoutSection() {
   )
 }
 
+/**
+ * The panel that was a placeholder.
+ *
+ * Four rows, and the last two are not new features so much as answers finally being said
+ * out loud: `dataDir` reached the interface only as the sidebar footer's `title`
+ * attribute, and `quarantinedPath` was written by `hydrate` and read by nothing at all —
+ * so a workspace file that could not be parsed was moved aside in silence and the user
+ * was shown an empty workspace with a healthy-looking footer.
+ */
 function StorageSection() {
   const { t } = useT()
+  const persistenceState = useAppStore(s => s.persistenceState)
+  const dataDir = useAppStore(s => s.dataDir)
+  const quarantinedPath = useAppStore(s => s.quarantinedPath)
+  // Not store state and not a preference. The switch lasts this visit, which is the line
+  // `RedactSecretsRow` draws for the code view: a control that decides whether a
+  // credential leaves in plain text must not be able to stay on behind your back.
+  const [includeSecrets, setIncludeSecrets] = useState(false)
+  // In the store, not here: a refusal raised from the sidebar or the palette has to be
+  // able to reach this panel, which is the only surface with room to print it.
+  const rejection = useAppStore(s => s.importRejection)
+  const { status: exportStatus, save } = useSave()
 
-  return <Placeholder icon={<HardDrive size={20} />} title={t('settings.storage.title')} description={t('settings.storage.desc')} />
+  // Both directions need a Wails runtime, and an import additionally needs the autosave
+  // subscriber — which `hydrate` installs only on its success path, so under
+  // `newer-version` a "successful" import would live in memory and be lost on quit.
+  // Export is disabled there too: that state loads no tree, so it would cheerfully write
+  // a valid-looking empty file over somebody's only backup.
+  const blocked = persistenceState === 'ready' ? null : persistenceState === 'newer-version' ? 'newer' : 'browser'
+
+  return (
+    <>
+      {blocked && (
+        <p className="settings-note">
+          <AlertTriangle size={14} aria-hidden="true" />
+          {t(blocked === 'newer' ? 'settings.storage.unavailable.newer' : 'settings.storage.unavailable.browser')}
+        </p>
+      )}
+
+      <div className="settings-row">
+        <div className="settings-label">
+          <span id="settings-export-label">{t('settings.storage.export.label')}</span>
+          <p id="settings-export-desc">{t('settings.storage.export.desc')}</p>
+        </div>
+        <button
+          type="button"
+          className="settings-action"
+          aria-labelledby="settings-export-label"
+          aria-describedby="settings-export-desc"
+          disabled={blocked !== null}
+          onClick={() => save(() => exportWorkspace(t('transfer.export.dialog'), includeSecrets))}
+        >
+          {exportStatus === 'saved' ? <Check size={14} aria-hidden="true" /> : <Download size={14} aria-hidden="true" />}
+          {exportStatus === 'saved'
+            ? t('settings.storage.export.saved')
+            : exportStatus === 'failed'
+              ? t('settings.storage.export.failed')
+              : t('settings.storage.export.action')}
+        </button>
+      </div>
+
+      {/* Under the row it modifies rather than beside it: it changes what that button
+          writes, and its description is the whole of the warning. */}
+      <SwitchRow
+        id="settings-include-secrets"
+        label="settings.storage.secrets.label"
+        description={t(includeSecrets ? 'settings.storage.secrets.desc.on' : 'settings.storage.secrets.desc.off')}
+        checked={includeSecrets}
+        onChange={setIncludeSecrets}
+      />
+
+      <div className="settings-row">
+        <div className="settings-label">
+          <span id="settings-import-label">{t('settings.storage.import.label')}</span>
+          <p id="settings-import-desc">{t('settings.storage.import.desc')}</p>
+          {rejection && <p className="settings-error">{t(REJECTION_COPY[rejection])}</p>}
+        </div>
+        <button
+          type="button"
+          className="settings-action"
+          aria-labelledby="settings-import-label"
+          aria-describedby="settings-import-desc"
+          disabled={blocked !== null}
+          onClick={() => void startImport(t('transfer.import.dialog'))}
+        >
+          <Upload size={14} aria-hidden="true" />
+          {t('settings.storage.import.action')}
+        </button>
+      </div>
+
+      {dataDir && <DataDirRow dataDir={dataDir} />}
+      {quarantinedPath && (
+        <div className="settings-row">
+          <div className="settings-label">
+            <span>{t('settings.storage.quarantine.label')}</span>
+            <p>{t('settings.storage.quarantine.desc')}</p>
+            <code className="settings-path">{quarantinedPath}</code>
+          </div>
+        </div>
+      )}
+    </>
+  )
+}
+
+/** A table rather than a ternary chain, so a rejection added without copy fails to compile. */
+const REJECTION_COPY = {
+  malformed: 'transfer.reject.malformed',
+  'newer-app': 'transfer.reject.newerApp',
+  'newer-workspace': 'transfer.reject.newerWorkspace',
+  unreadable: 'transfer.reject.unreadable',
+} as const satisfies Record<ImportRejection, PlainMessageKey>
+
+/** Split out only so the copy acknowledgement is not a hook behind a condition. */
+function DataDirRow({ dataDir }: { dataDir: string }) {
+  const { t } = useT()
+  const { status, copy } = useCopy()
+
+  return (
+    <div className="settings-row">
+      <div className="settings-label">
+        <span id="settings-data-dir-label">{t('settings.storage.location.label')}</span>
+        <p id="settings-data-dir-desc">{t('settings.storage.location.desc')}</p>
+        <code className="settings-path">{dataDir}</code>
+      </div>
+      <button
+        type="button"
+        className="icon-btn"
+        aria-label={t('settings.storage.location.copy')}
+        title={t('settings.storage.location.copy')}
+        onClick={() => copy(dataDir)}
+      >
+        {status === 'copied' ? <Check size={14} aria-hidden="true" /> : <Copy size={14} aria-hidden="true" />}
+      </button>
+    </div>
+  )
 }
 
 function ThemeRow() {

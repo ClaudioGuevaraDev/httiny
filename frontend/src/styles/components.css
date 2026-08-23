@@ -3981,7 +3981,7 @@
    * the same kind of thing and the app has one modal language, not two. */
   .settings-dialog {
     /* Viewport terms divided by `--zoom`, px caps left to grow — see the palette above. */
-    width: min(720px, calc(92vw / var(--zoom, 1)));
+    width: min(760px, calc(92vw / var(--zoom, 1)));
     height: min(calc(72vh / var(--zoom, 1)), 520px);
     margin: auto;
     padding: 0;
@@ -3993,9 +3993,11 @@
     overflow: hidden;
   }
 
-  /* A fixed height rather than one that follows its content: General has one row
-   * today and Storage has none, so an auto height would resize the dialog under the
-   * pointer every time the section changed. */
+  /* A fixed height rather than one that follows its content: the sections are three
+   * rows, three rows, three rows and — since Storage stopped being a placeholder — up
+   * to six, so an auto height would resize the dialog under the pointer every time the
+   * section changed. Storage is now the one that can overflow, which `.settings-panel`
+   * handles with its own `overflow: auto`. */
   .settings-shell {
     position: relative;
     height: 100%;
@@ -4139,6 +4141,90 @@
     color: var(--color-text-subtle);
     font-size: var(--text-2xs);
     text-wrap: pretty;
+  }
+
+  /* The Storage panel's own three. Everything above it is a label and a control; these
+   * are a button that does something, a path to read, and two sentences that are only
+   * there when something is wrong. */
+  .settings-action {
+    /* `flex: none` and a floor, because this is the right-hand item of a `space-between`
+     * row: without them the button is squeezed by whatever the description on the left
+     * needs, and the export one — whose label swaps between three lengths as it reports —
+     * would resize under the pointer every time it was pressed. */
+    flex: none;
+    min-width: 116px;
+    height: var(--h-control-md);
+    padding: 0 12px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 7px;
+    white-space: nowrap;
+    border: 1px solid var(--color-border-control);
+    border-radius: var(--radius-sm);
+    background: var(--color-surface-3);
+    color: var(--color-text);
+    font-size: var(--text-xs);
+    cursor: pointer;
+    transition:
+      background-color var(--duration-fast) var(--ease-standard),
+      border-color var(--duration-fast) var(--ease-standard),
+      color var(--duration-fast) var(--ease-standard);
+  }
+
+  .settings-action:hover:not(:disabled) {
+    background: var(--color-surface-hover);
+  }
+
+  /* Both directions need a Wails runtime, and the panel says why above rather than
+   * leaving a dead button to be discovered. */
+  .settings-action:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+
+  /* A path is a token, not prose: it must not wrap mid-segment or be re-flowed by the
+   * proportional font the rest of the panel is set in, and it has to be selectable. */
+  .settings-path {
+    display: block;
+    margin-top: 6px;
+    max-width: 34ch;
+    color: var(--color-text-subtle);
+    font-family: var(--font-mono);
+    font-size: var(--text-2xs);
+    overflow-wrap: anywhere;
+    user-select: text;
+  }
+
+  .settings-note,
+  .settings-error {
+    margin: 0 0 4px;
+    display: flex;
+    align-items: flex-start;
+    gap: 7px;
+    font-size: var(--text-2xs);
+    text-wrap: pretty;
+  }
+
+  .settings-note {
+    padding: 8px 10px;
+    border: 1px solid var(--color-border-subtle);
+    border-radius: var(--radius-sm);
+    background: var(--color-surface-3);
+    color: var(--color-text-subtle);
+  }
+
+  .settings-note svg {
+    flex: none;
+    margin-top: 1px;
+  }
+
+  /* Inside the import row's label, under its description, so the reason sits with the
+   * control it belongs to rather than at the top of the panel. */
+  .settings-error {
+    margin: 6px 0 0;
+    max-width: 34ch;
+    color: var(--color-danger);
   }
 
   /* This rule used to open "Left native rather than reimplemented: the OS draws the

@@ -16,6 +16,28 @@ export function DataDir(): $CancellablePromise<string> {
     return $Call.ByID(875064860);
 }
 
+/**
+ * ExportFile writes an already-serialised workspace export to a file the user chooses.
+ * 
+ * The dialog is opened here rather than from the frontend, although the Wails runtime
+ * offers both — the reason httpexec's SaveBody gives: going the other way means handing
+ * a filesystem path back across the binding for Go to write to, which is a wider door
+ * than this needs.
+ * 
+ * Contents arrives serialised because the frontend owns the payload schema. Go neither
+ * builds nor validates it, exactly as it does not for workspace.json.
+ */
+export function ExportFile(contents: string, filename: string, title: string): $CancellablePromise<$models.TransferResult> {
+    return $Call.ByID(1539235637, contents, filename, title);
+}
+
+/**
+ * ImportFile opens a workspace export the user chooses and hands back its text.
+ */
+export function ImportFile(title: string): $CancellablePromise<$models.ImportResult> {
+    return $Call.ByID(3755610682, title);
+}
+
 export function LoadPrefs(): $CancellablePromise<$models.LoadResult> {
     return $Call.ByID(4024617645);
 }
