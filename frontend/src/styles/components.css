@@ -747,7 +747,7 @@
    * It was `opacity-0 group-hover:opacity-100`, which meant a control that only existed
    * for a mouse: reaching the row by keyboard left it invisible. It now surfaces on
    * hover, when the row itself has focus, and when anything inside it has focus — the
-   * same reveal used for `.tab-close` and `.row-delete`. */
+   * same reveal used for `.tab-close`. */
   .tree-actions {
     position: absolute;
     right: 2px;
@@ -1119,10 +1119,22 @@
     min-width: 380px;
   }
 
+  /* The last track is `--h-control-md` where the first is `--h-control-xs`, though both
+   * hold a 24px control. An `.icon-btn.xs` is exactly 24px, so in a 24px track it fills its
+   * cell edge to edge — and every cell but the last draws a `border-right`, so Delete's
+   * hover plate landed flush against the divider of the cell before it and read as a plate
+   * with a line through it. 32px, with `.row-delete`'s `margin: auto`, leaves 4px of air
+   * each side. The 8px comes off the `fr` columns and is not missed.
+   *
+   * Latent until Delete stopped hiding until hover: a plate that only ever appeared under
+   * the pointer, on the row the pointer was already on, was not looked at closely enough to
+   * see it. Column 1 needs no such room because `.row-check` solves it the other way,
+   * painting a 16px `::before` inside its 24px hit area — which is the idiom to reach for
+   * when a track cannot spare the 8px. */
   .kv-header,
   .kv-row {
     display: grid;
-    grid-template-columns: var(--h-control-xs) minmax(0, 0.9fr) minmax(0, 1.2fr) minmax(0, 1fr) var(--h-control-xs);
+    grid-template-columns: var(--h-control-xs) minmax(0, 0.9fr) minmax(0, 1.2fr) minmax(0, 1fr) var(--h-control-md);
     align-items: center;
   }
 
@@ -1138,7 +1150,7 @@
 
     .kv-header,
     .kv-row {
-      grid-template-columns: var(--h-control-xs) minmax(0, 1fr) minmax(0, 1.3fr) var(--h-control-xs);
+      grid-template-columns: var(--h-control-xs) minmax(0, 1fr) minmax(0, 1.3fr) var(--h-control-md);
     }
   }
 
@@ -1166,12 +1178,6 @@
 
   .kv-row:hover {
     background: var(--color-surface-2);
-  }
-
-  .kv-row:hover .row-delete,
-  .kv-row:focus-within .row-delete,
-  .row-delete:focus-visible {
-    opacity: 1;
   }
 
   .technical-input,
@@ -1204,8 +1210,19 @@
     color: var(--color-text-faint);
   }
 
+  /* Always drawn, and quiet: `--color-text-subtle` rather than `.icon-btn`'s
+   * `--color-text-muted`, which is what `.var-grid` established for a control that is
+   * present at rest. `.icon-btn:hover` still lights it.
+   *
+   * It was `opacity: 0` until the row was hovered, which left the only way to remove a
+   * row invisible until the pointer found it. The track is a fixed width either way, so
+   * hiding bought no layout — only quiet, and the resting colour buys that without hiding
+   * anything. */
   .row-delete {
-    opacity: 0;
+    /* `.row-check`'s idiom: the hit area is the button, the cell is wider, and the 24px
+     * square sits centred in it rather than against the divider. */
+    margin: auto;
+    color: var(--color-text-subtle);
   }
 
   /* The hit area is a full 24px square (SC 2.5.8) while the box itself stays a
@@ -1286,7 +1303,7 @@
    * optional column on — see FormGrid for why it is not a description. */
   .form-grid .kv-header,
   .form-grid .kv-row {
-    grid-template-columns: var(--h-control-xs) 92px minmax(0, 0.9fr) minmax(0, 1.3fr) minmax(0, 1fr) var(--h-control-xs);
+    grid-template-columns: var(--h-control-xs) 92px minmax(0, 0.9fr) minmax(0, 1.3fr) minmax(0, 1fr) var(--h-control-md);
   }
 
   @container (max-width: 560px) {
@@ -1304,7 +1321,7 @@
 
     .form-grid .kv-header,
     .form-grid .kv-row {
-      grid-template-columns: var(--h-control-xs) 92px minmax(0, 1fr) minmax(0, 1.3fr) var(--h-control-xs);
+      grid-template-columns: var(--h-control-xs) 92px minmax(0, 1fr) minmax(0, 1.3fr) var(--h-control-md);
     }
   }
 
@@ -1336,18 +1353,12 @@
    * container-query branch below: the column the base rule hides at 560px is the one this
    * grid can least afford to lose.
    *
-   * The two action columns are `--h-control-md` and not the `--h-control-xs` the base grid
-   * gives its single one, and that is a fix rather than padding for its own sake. An
-   * `.icon-btn.xs` is exactly 24px, so in a 24px column it filled the cell edge to edge —
-   * and every cell but the last draws a `border-right`, so the lock's hover plate started
-   * flush against the value field's divider and the lock sat boxed between two lines. 32px
-   * with the `margin: auto` below leaves 4px of air each side: 4px to that divider, 8px
-   * between the two glyphs.
-   *
-   * The base grid never showed this because its one action is Delete — last cell, so no
-   * divider, and `opacity: 0` until the row is hovered. `.row-check` has the same problem in
-   * column 1 and dodges it another way, by drawing a 16px `::before` inside its 24px hit
-   * area. */
+   * Both action columns are `--h-control-md`, for the reason the base grid's last track is:
+   * an `.icon-btn.xs` fills a 24px track edge to edge, and its hover plate then lands on the
+   * `border-right` of the cell before it. Here that was the value field's divider, with the
+   * lock boxed between two lines. 32px and `margin: auto` leave 4px of air each side, and
+   * buy the 8px between the two glyphs that a pair of actions needs and a lone one does
+   * not. */
   .var-grid .kv-header,
   .var-grid .kv-row {
     grid-template-columns: var(--h-control-xs) minmax(0, 1fr) minmax(0, 1.4fr) var(--h-control-md) var(--h-control-md);
@@ -1355,8 +1366,7 @@
 
   /* `.row-check`'s idiom, two columns over: the hit area is the cell, the visible box is
    * centred inside it. */
-  .var-grid .row-secret,
-  .var-grid .row-delete {
+  .var-grid .row-secret {
     margin: auto;
   }
 
@@ -1407,21 +1417,19 @@
    * reads as one group.
    *
    * The lock has to be: it is state, not an action, and a row whose lock you cannot see is
-   * a row you cannot tell is holding a credential. Delete follows it here — where the base
-   * grid keeps it at `opacity: 0` until the row is hovered — for two reasons. Beside a lock
-   * that is always drawn, an empty 32px cell reads as something failing to render rather
-   * than as an action in waiting. And this grid is a small focused editor, not a
-   * twenty-row-long request panel, so there is no clutter to buy back by hiding it.
+   * a row you cannot tell is holding a credential. Delete needs nothing here any more:
+   * `--color-text-subtle` and always drawn is what the base `.row-delete` now says, so the
+   * pair matches without this grid restating it. This block used to carry that exception
+   * and the argument for it — that a request panel twenty rows long had clutter to buy
+   * back by hiding delete until hover. It did not: it bought an invisible control.
    *
    * `--color-text-subtle` rather than `.icon-btn`'s `--color-text-muted`: always-visible
-   * means quiet by default. `.icon-btn:hover` still lights both up. */
-  .var-grid .row-secret,
-  .var-grid .row-delete {
+   * means quiet by default, and it is what the base `.row-delete` now carries as well,
+   * which is what keeps the pair matching. `.icon-btn:hover` re-colours delete, whose base
+   * rule it outweighs; the lock ties it on specificity and wins on source order, so the
+   * pointer is answered by the plate alone. */
+  .var-grid .row-secret {
     color: var(--color-text-subtle);
-  }
-
-  .var-grid .row-delete {
-    opacity: 1;
   }
 
   .var-grid .row-secret.on {
@@ -4727,7 +4735,6 @@
       border-color var(--duration-fast) var(--ease-standard);
   }
 
-  .row-delete,
   .tab-close,
   .tree-actions {
     transition: opacity var(--duration-fast) var(--ease-standard);
