@@ -49,7 +49,7 @@ Pull requests should explain the behavior changed, list manual verification step
 
 ## Agent-Specific Versioning Rule
 
-Whenever the user explicitly requests the `.agents/skills/conventional-commit` skill, update the application version before staging and committing. Treat versions as `A.B.C` and never change `A`:
+Whenever the user explicitly requests the `.agents/skills/conventional-commit` skill, update the application version before staging and committing. Treat versions as `A.B.C` and never change `A` unless the user explicitly asks for it — 1.0.0 was such a request, and it is the only one so far:
 
 - Increase `B` and reset `C` to `0` for a new user-facing feature or a meaningful capability change.
 - Increase only `C` for fixes, documentation, styling, refactors, dependency/build work, and other compatible maintenance.

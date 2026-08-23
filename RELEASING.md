@@ -23,6 +23,15 @@ is the whole process; nothing is uploaded by hand.
    grep -rn "<old version>" build frontend/package.json   # must return nothing
    ```
 
+   Editing those files by hand is the smaller change when the CLI is not to hand, and the
+   `grep` above is what proves it was complete. Seven files under `build/` carry the number:
+   `config.yml`, `windows/info.json` (three fields), `windows/nsis/wails_tools.nsh`
+   (`INFO_PRODUCTVERSION`, which becomes the `DisplayVersion` in Add/Remove Programs),
+   `windows/wails.exe.manifest`, `darwin/Info.plist` and `darwin/Info.dev.plist`, plus
+   `linux/nfpm/nfpm.yaml`. Every one of them except `config.yml` sat at `0.22.8` for fourteen
+   minor releases, because `config.yml` and `frontend/package.json` are the only two CI
+   verifies — the `grep` is the only thing that catches the rest.
+
 3. Commit the bump.
 4. Tag the commit with `v` + the same number and push it:
 
@@ -124,8 +133,8 @@ discard two deliberate local edits:
 
 - `build/windows/info.json` — the language key is `0409` (en-US), not the template's `0000`
   (language-neutral), and `fixed.product_version` is set. See the note in CLAUDE.md.
-- `build/linux/nfpm/nfpm.yaml` — the homepage points at this repository, the `license` field is
-  removed because the repository declares no license, and the icon installed is
+- `build/linux/nfpm/nfpm.yaml` — the homepage points at this repository, `license` is `MIT`
+  (the template emits nothing, so it has to be reapplied), and the icon installed is
   `build/appicon.svg` into `hicolor/scalable/apps/` rather than the 1024×1024
   `build/appicon.png` into `hicolor/128x128/apps/`, whose directory name lied about the size.
 
