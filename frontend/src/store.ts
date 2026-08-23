@@ -6,6 +6,7 @@ import type {
   BodyLanguage,
   BodyView,
   CollectionNode,
+  ConfirmIntent,
   HttpMethod,
   KeyValueRow,
   Locale,
@@ -246,6 +247,22 @@ interface AppState {
    */
   updateDismissed: boolean
 
+  /**
+   * What a confirmation dialog is asking about, or `null` for none. Here rather than
+   * in a `useState` because the two things that raise one — a tree row and the settings
+   * panel — cannot host the dialog themselves: `TreeRowActions` renders inside a
+   * `role="treeitem"`, whose only allowed children are groups and treeitems, and a
+   * `<dialog>` nested there stays a treeitem descendant in the accessibility tree even
+   * while it paints in the top layer. So one instance lives at the app root and this
+   * field is how anything reaches it.
+   *
+   * An intent, never a callback — see `ConfirmIntent`.
+   *
+   * Not persisted, for the reason `settingsOpen` gives: `toPrefsFile` is an explicit
+   * whitelist, and a question that reopens on launch asks about a click nobody made.
+   */
+  confirm: ConfirmIntent | null
+
   openRequest: (id: string) => void
   closeRequest: (id: string) => void
   setActive: (id: string) => void
@@ -291,6 +308,14 @@ interface AppState {
   openCode: () => void
   closeCode: () => void
   setCodeTarget: (target: SnippetTarget) => void
+  askConfirm: (intent: ConfirmIntent) => void
+  closeConfirm: () => void
+  /**
+   * Carry out whatever is pending and clear it. The switch lives here rather than in the
+   * dialog so the mapping from intent to action sits beside the actions themselves —
+   * `ConfirmDialog` only has to know how to word the question.
+   */
+  runConfirm: () => void
 }
 
 const mapTree = (nodes: TreeNode[], fn: (node: TreeNode) => TreeNode): TreeNode[] =>
@@ -446,7 +471,7 @@ const containerFor = (nodes: TreeNode[], selectedNodeId: string | null, activeCo
 /** Root-level collections, in order — exactly what the rail lists. */
 export const collectionsIn = (nodes: TreeNode[]): CollectionNode[] => nodes.filter((n): n is CollectionNode => n.type === 'collection')
 
-export const useAppStore = create<AppState>(set => ({
+export const useAppStore = create<AppState>((set, get) => ({
   // The app starts genuinely empty. There are no fixtures to seed from any more:
   // demo data against a domain that does not exist made every surface look
   // populated while nothing worked, and it hid the first-run experience.
@@ -472,6 +497,7 @@ export const useAppStore = create<AppState>(set => ({
   settingsOpen: false,
   codeOpen: false,
   codeTarget: DEFAULT_SNIPPET_TARGET,
+  confirm: null,
   persistenceState: 'loading',
   saveState: 'idle',
   secretsAvailable: true,
@@ -747,6 +773,31 @@ export const useAppStore = create<AppState>(set => ({
   openCode: () => set({ codeOpen: true }),
   closeCode: () => set({ codeOpen: false }),
   setCodeTarget: codeTarget => set({ codeTarget }),
+  askConfirm: confirm => set({ confirm }),
+  closeConfirm: () => set({ confirm: null }),
+  runConfirm: () => {
+    const intent = get().confirm
+    if (!intent) return
+    // Cleared before the action runs, not after: both actions re-enter the subscribers
+    // that autosave and re-render, and none of them should see a question that has
+    // already been answered.
+    set({ confirm: null })
+    switch (intent.kind) {
+      case 'deleteNode':
+        get().deleteNode(intent.nodeId)
+        return
+      case 'resetSettings':
+        get().resetSettings()
+        return
+      default: {
+        // Not reachable: the switch above covers ConfirmIntent. This exists so that
+        // adding a member without a branch fails to compile rather than shipping a
+        // confirm button that does nothing.
+        const exhaustive: never = intent
+        return exhaustive
+      }
+    }
+  },
 }))
 
 /**

@@ -58,6 +58,7 @@
   --color-text-faint: #5c5f68; /*  4.59 worst — placeholders, gutter numbers;
                                     the darkest legal text                     */
   --color-text-on-accent: #ffffff; /* 5.89 on --color-accent                   */
+  --color-text-on-danger: #ffffff; /* 6.61 on --color-danger, 9.30 on its hover */
 
   /* ── Accent ─────────────────────────────────────────────────────────────── */
   /* The dark theme's #22c55e renders about 2:1 on white, so the green drops two
@@ -72,6 +73,7 @@
   /* ── Status ─────────────────────────────────────────────────────────────── */
   --color-success: #0f7434; /*      4.93 canvas                                */
   --color-danger: #b81139; /*       5.54 canvas · 6.62 s1                      */
+  --color-danger-hover: #8f0c2c; /*  darker, like --color-accent-hover           */
   --color-danger-strong: #7a1622; /* 9.16 on --color-surface-danger            */
   --color-danger-muted: #84434c; /*  7.27 s1 — error detail copy               */
   --color-warning: #8f5a09; /*      4.84 canvas                                */

@@ -77,7 +77,10 @@ export function useGlobalShortcuts(): void {
       // and not `update.state`: a postponed update stays in the store so the sidebar
       // can offer it, and testing the state alone would leave the keyboard locked out
       // for the rest of the session.
-      if (state.paletteOpen || state.settingsOpen || state.codeOpen || isUpdateModalOpen(state.update, state.updateDismissed)) return
+      // A pending confirmation counts too, for the same reason the update modal does:
+      // Ctrl+Enter would otherwise fire a request from behind a dialog asking whether to
+      // delete it, and Escape would abort an in-flight send on its way to dismissing it.
+      if (state.confirm || state.paletteOpen || state.settingsOpen || state.codeOpen || isUpdateModalOpen(state.update, state.updateDismissed)) return
 
       const id = state.activeId
 

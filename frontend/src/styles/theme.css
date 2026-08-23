@@ -60,6 +60,7 @@
   --color-text-faint: #86868f; /*   4.60 worst ·  5.48 canvas — placeholders,
                                     gutter numbers; the darkest legal text       */
   --color-text-on-accent: #06120a; /* 8.39 on --color-accent                     */
+  --color-text-on-danger: #1a0509; /* 7.30 on --color-danger, 10.38 on its hover */
 
   /* ── Accent ─────────────────────────────────────────────────────────────── */
   --color-accent: #22c55e; /*       8.69 canvas · 8.46 s1                        */
@@ -70,6 +71,7 @@
   /* ── Status ─────────────────────────────────────────────────────────────── */
   --color-success: #4ade80; /*      11.36 canvas                                 */
   --color-danger: #fb7185; /*        7.30 canvas · 7.10 s1                       */
+  --color-danger-hover: #fda4af; /*  lighter, like --color-accent-hover            */
   --color-danger-strong: #ffdbe0; /* headings on --color-surface-danger          */
   --color-danger-muted: #b09298; /*  6.77 s1 — error detail copy                 */
   --color-warning: #fbbf24; /*      11.86 canvas                                 */

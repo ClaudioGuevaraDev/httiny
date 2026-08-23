@@ -447,6 +447,17 @@ export type UpdateState =
   | { state: 'error'; version: string; code: string; detail: string }
 
 /**
+ * What a confirmation dialog is currently asking about. Data, never a callback: a
+ * function in the store would be state nothing could compare, serialise or reason
+ * about, and the mapping from intent to action belongs beside the actions it calls
+ * (`runConfirm` in `store.ts`) rather than in the dialog that draws the question.
+ *
+ * A discriminated union on `kind` for the reason `UpdateState` is one: the dialog
+ * branches on it exhaustively, so an intent added without copy fails to compile.
+ */
+export type ConfirmIntent = { kind: 'deleteNode'; nodeId: string } | { kind: 'resetSettings' }
+
+/**
  * Labels for the filled chips — the sidebar tree, the tab strip and the command palette.
  * The method picker does not use these: it is choosing a method and names it in full.
  *

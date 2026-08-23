@@ -114,13 +114,10 @@ function SettingsBody({ onDismiss }: { onDismiss: () => void }) {
   // `?? SECTIONS[0]` rather than a `!`: it is a tuple, index 0 exists, and nothing has to
   // be asserted to say so.
   const { Panel: ActivePanel } = SECTIONS.find(entry => entry.id === section) ?? SECTIONS[0]
-  const resetSettings = useAppStore(s => s.resetSettings)
-
-  const confirmReset = () => {
-    // The OK/Cancel labels come from the OS, so the question carries the whole meaning and
-    // never names a button — the same contract the tree's delete confirmation follows.
-    if (window.confirm(t('settings.reset.confirm'))) resetSettings()
-  }
+  // Only the question; `ConfirmDialog` words it and `runConfirm` carries it out. This used
+  // to be a `window.confirm`, which a webview draws as the platform's own dialog — with
+  // the asset server's origin in the title bar and OK/Cancel from the OS.
+  const askConfirm = useAppStore(s => s.askConfirm)
 
   return (
     <div className="settings-shell">
@@ -151,7 +148,7 @@ function SettingsBody({ onDismiss }: { onDismiss: () => void }) {
         {/* Outside `.settings-sections` on purpose: a tablist's children are tabs, and this
             is not a section — it acts on all of them, which is also why it belongs to the
             navigation column rather than to any one panel. */}
-        <button type="button" className="settings-reset" onClick={confirmReset}>
+        <button type="button" className="settings-reset" onClick={() => askConfirm({ kind: 'resetSettings' })}>
           <RotateCcw size={14} aria-hidden="true" />
           {t('settings.reset.label')}
         </button>

@@ -1,7 +1,7 @@
 import { useRef, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent } from 'react'
 import { FilePlus2, FolderPlus, PenLine, Trash2 } from 'lucide-react'
 import { useT } from '../language'
-import { findNode, requestIdsIn, useAppStore } from '../store'
+import { useAppStore } from '../store'
 import type { TreeNode } from '../types'
 
 /**
@@ -12,8 +12,10 @@ import type { TreeNode } from '../types'
  * needed to be a popup: outside-pointerdown dismissal, `role="menu"`, an open state
  * threaded through the row, and an entrance animation.
  *
- * What it keeps is the delete confirmation and the focus contract, because those were
- * never about the menu.
+ * What it keeps is the focus contract, because that was never about the menu. The delete
+ * confirmation has moved out to `ConfirmDialog`, which is at the app root rather than in
+ * here: a `<dialog>` nested in a `role="treeitem"` stays a treeitem descendant in the
+ * accessibility tree, and a treeitem may only contain groups and treeitems.
  *
  * `tabbable` is the difference between the two places this renders. Inside a `treeitem`
  * the buttons must not be tab stops — the tree pattern allows exactly one for the whole
@@ -32,9 +34,9 @@ export function TreeRowActions({
   onRename: () => void
   onReturnFocus: () => void
 }) {
-  const { t, plural } = useT()
+  const { t } = useT()
   const addNode = useAppStore(s => s.addNode)
-  const deleteNode = useAppStore(s => s.deleteNode)
+  const askConfirm = useAppStore(s => s.askConfirm)
   const groupRef = useRef<HTMLDivElement>(null)
 
   const onKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
@@ -61,26 +63,6 @@ export function TreeRowActions({
     event.stopPropagation()
     onReturnFocus()
     action()
-  }
-
-  const confirmDelete = () => {
-    // Deleting a folder prunes every request beneath it — documents, tabs and stored
-    // responses — so the confirmation says how much is going, not just the name.
-    const target = findNode(useAppStore.getState().tree, node.id)
-    const count = target ? requestIdsIn(target).length : 0
-    // Whole sentences rather than a clause spliced into one. Spanish puts the count
-    // inside an agreeing noun phrase — "y las 3 solicitudes que contiene" — which no
-    // amount of concatenation can produce. Zero gets its own message because neither
-    // language has a CLDR `zero` category to select.
-    const message =
-      node.type === 'request'
-        ? t('tree.confirm.request', { name: node.name })
-        : count === 0
-          ? t('tree.confirm.empty', { name: node.name })
-          : plural('tree.confirm.container', count, { name: node.name })
-    // The OK/Cancel labels come from the OS, not from the app, so the question has to
-    // carry the whole meaning and must never name a button.
-    if (window.confirm(message)) deleteNode(node.id)
   }
 
   return (
@@ -133,7 +115,7 @@ export function TreeRowActions({
         tabIndex={tabbable ? undefined : -1}
         aria-label={t('tree.delete.aria', { name: node.name })}
         title={t('tree.delete.title', { name: node.name })}
-        onClick={run(confirmDelete)}
+        onClick={run(() => askConfirm({ kind: 'deleteNode', nodeId: node.id }))}
       >
         <Trash2 size={13} aria-hidden="true" />
       </button>

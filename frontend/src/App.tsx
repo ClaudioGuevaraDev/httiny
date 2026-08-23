@@ -2,6 +2,7 @@ import { useRef } from 'react'
 import { PanelLeftClose, PanelLeftOpen } from 'lucide-react'
 import { CommandPalette } from './components/CommandPalette'
 import { CodeModal } from './components/CodeModal'
+import { ConfirmDialog } from './components/ConfirmDialog'
 import { SettingsModal } from './components/SettingsModal'
 import { UpdateModal } from './components/UpdateModal'
 import { RequestEditor } from './components/RequestEditor'
@@ -117,6 +118,9 @@ export function App() {
       <SettingsModal />
       <CodeModal />
       <UpdateModal />
+      {/* Last, though the order is only tidiness: a modal's stacking follows its
+          `showModal()` call, which is what lets this one open over the settings dialog. */}
+      <ConfirmDialog />
     </div>
   )
 }

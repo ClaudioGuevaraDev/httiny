@@ -349,13 +349,18 @@ export const es: Catalog = {
   'tree.rename.title': 'Renombrar «{name}»',
   'tree.delete.aria': 'Eliminar {name}',
   'tree.delete.title': 'Eliminar «{name}»',
-  'tree.confirm.request': '¿Eliminar «{name}»? Esta acción no se puede deshacer.',
-  'tree.confirm.empty': '¿Eliminar «{name}»? Esta acción no se puede deshacer.',
+  'tree.confirm.request': '¿Eliminar «{name}»?',
+  'tree.confirm.empty': '¿Eliminar «{name}»?',
   // Sin `{count}` a propósito: «y la 1 solicitud» no es español. Un hueco de menos es
   // una decisión de estilo; uno de más sería un hueco que nadie rellena, y eso sí lo
   // detecta la auditoría de `index.ts`.
-  'tree.confirm.container.one': '¿Eliminar «{name}» y la solicitud que contiene? Esta acción no se puede deshacer.',
-  'tree.confirm.container.other': '¿Eliminar «{name}» y las {count} solicitudes que contiene? Esta acción no se puede deshacer.',
+  'tree.confirm.container.one': '¿Eliminar «{name}» y la solicitud que contiene?',
+  'tree.confirm.container.other': '¿Eliminar «{name}» y las {count} solicitudes que contiene?',
+  'tree.confirm.detail': 'Esta acción no se puede deshacer.',
+  'tree.confirm.action': 'Eliminar',
+
+  // ── Confirmaciones ────────────────────────────────────────────────────────
+  'confirm.cancel': 'Cancelar',
 
   // ── Command palette ──────────────────────────────────────────────────────────
   'palette.dialog': 'Paleta de comandos',
@@ -456,7 +461,8 @@ export const es: Catalog = {
   'settings.section.storage': 'Almacenamiento',
   'settings.close': 'Cerrar los ajustes',
   'settings.reset.label': 'Restablecer todo',
-  'settings.reset.confirm': '¿Restablecer todos los ajustes a sus valores por defecto? Esto incluye el idioma de la interfaz.',
+  'settings.reset.confirm': '¿Restablecer todos los ajustes a sus valores por defecto?',
+  'settings.reset.detail': 'Esto incluye el idioma de la interfaz. Tu espacio de trabajo no cambia.',
   'settings.storage.title': 'Aquí todavía no hay nada',
   'settings.storage.desc': 'Los ajustes de almacenamiento estarán en este panel.',
   'settings.theme.label': 'Tema',

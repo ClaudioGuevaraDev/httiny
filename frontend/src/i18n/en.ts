@@ -387,13 +387,24 @@ export const en = {
   'tree.rename.title': 'Rename “{name}”',
   'tree.delete.aria': 'Delete {name}',
   'tree.delete.title': 'Delete “{name}”',
-  // Four whole sentences rather than a spliced clause. Neither en nor es has a CLDR
+  // Four whole questions rather than a spliced clause. Neither en nor es has a CLDR
   // `zero` category, so an empty container gets its own message instead of going
   // through the plural with a count of 0.
-  'tree.confirm.request': 'Delete “{name}”? This cannot be undone.',
-  'tree.confirm.empty': 'Delete “{name}”? This cannot be undone.',
-  'tree.confirm.container.one': 'Delete “{name}” and the {count} request inside it? This cannot be undone.',
-  'tree.confirm.container.other': 'Delete “{name}” and the {count} requests inside it? This cannot be undone.',
+  //
+  // The consequence moved out into `.detail` when these stopped being `window.confirm`
+  // strings: the dialog has a title and a body, and a question that answers itself in
+  // the same breath reads as one long line in the first of them.
+  'tree.confirm.request': 'Delete “{name}”?',
+  'tree.confirm.empty': 'Delete “{name}”?',
+  'tree.confirm.container.one': 'Delete “{name}” and the {count} request inside it?',
+  'tree.confirm.container.other': 'Delete “{name}” and the {count} requests inside it?',
+  'tree.confirm.detail': 'This cannot be undone.',
+  'tree.confirm.action': 'Delete',
+
+  // ── Confirmations ─────────────────────────────────────────────────────────
+  // The one label the dialog owns whatever it is asking: every intent names its own
+  // confirm button, and none of them names this one differently.
+  'confirm.cancel': 'Cancel',
 
   // ── Command palette ──────────────────────────────────────────────────────────
   'palette.dialog': 'Command palette',
@@ -501,7 +512,10 @@ export const en = {
   // Short, because the navigation column is 176px wide. The sentence that has to carry the
   // whole meaning lives in the confirmation, where there is room for it.
   'settings.reset.label': 'Restore defaults',
-  'settings.reset.confirm': 'Restore every setting to its default? This includes the interface language.',
+  // The question, then what it costs — and what it does not. Nobody restoring a
+  // preference should have to wonder whether their requests went with it.
+  'settings.reset.confirm': 'Restore every setting to its default?',
+  'settings.reset.detail': 'This includes the interface language. Nothing in your workspace changes.',
   'settings.storage.title': 'Nothing here yet',
   'settings.storage.desc': 'Storage settings will live in this panel.',
   'settings.theme.label': 'Theme',
